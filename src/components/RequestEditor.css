@@ -1,0 +1,223 @@
+.request-editor {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    overflow: hidden;
+}
+.request-editor-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--text-secondary);
+}
+
+/* URL Bar */
+.url-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--chrome-border-soft);
+    flex-shrink: 0;
+}
+.method-dropdown {
+    position: relative;
+}
+.method-trigger {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--chrome-border-soft);
+    border-radius: 0;
+    padding: 6px 8px;
+    font-weight: 700;
+    font-size: 12px;
+    cursor: pointer;
+    min-width: 80px;
+    font-family: inherit;
+}
+.method-trigger:hover {
+    border-color: var(--accent-primary);
+}
+.method-menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    min-width: 100%;
+    background: var(--bg-secondary);
+    border: 1px solid var(--chrome-border-soft);
+    border-radius: 0;
+    padding: 4px 0;
+    z-index: 100;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+}
+.method-option {
+    padding: 6px 10px;
+    font-weight: 700;
+    font-size: 12px;
+    cursor: pointer;
+}
+.method-option:hover {
+    background: var(--bg-hover);
+}
+.method-option.selected {
+    background: var(--bg-hover);
+}
+.url-input {
+    flex: 1;
+    background: var(--bg-secondary);
+    border: 1px solid var(--chrome-border-soft);
+    color: var(--text-primary);
+    padding: 6px 10px;
+    border-radius: 0;
+    font-family: "SF Mono", "Fira Code", monospace;
+    font-size: 13px;
+}
+.url-input:focus {
+    outline: none;
+    border-color: var(--accent-primary);
+}
+.send-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--accent-primary);
+    color: var(--accent-primary-foreground);
+    border: none;
+    padding: 6px 16px;
+    border-radius: 0;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 13px;
+    white-space: nowrap;
+}
+.send-btn:hover {
+    filter: brightness(1.1);
+}
+.send-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+/* Request Tabs */
+.req-section {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+}
+.req-tabs {
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid var(--chrome-border-soft);
+    flex-shrink: 0;
+}
+.req-tabs button {
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--text-secondary);
+    padding: 6px 16px;
+    cursor: pointer;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.req-tabs button.active {
+    color: var(--text-primary);
+    border-bottom-color: var(--accent-primary);
+}
+.req-tabs button:hover {
+    color: var(--text-primary);
+}
+.badge {
+    background: var(--accent-primary-soft);
+    color: var(--accent-primary);
+    padding: 1px 6px;
+    border-radius: 0;
+    font-size: 10px;
+    font-weight: 600;
+}
+.req-tab-content {
+    flex: 1;
+    overflow: auto;
+    min-height: 0;
+}
+
+/* Body Editor */
+.body-editor {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+.body-type-selector {
+    display: flex;
+    gap: 16px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--chrome-border-soft);
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+.body-type-selector label {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+}
+.body-type-selector input[type="radio"] {
+    accent-color: var(--accent-primary);
+}
+.body-textarea {
+    flex: 1;
+    width: 100%;
+    background: transparent;
+    border: none;
+    color: var(--text-primary);
+    font-family: "SF Mono", "Fira Code", monospace;
+    font-size: 12px;
+    padding: 8px 12px;
+    resize: none;
+    line-height: 1.5;
+}
+.body-textarea:focus {
+    outline: none;
+}
+.body-none {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--text-secondary);
+    font-size: 13px;
+}
+
+/* Resize Handle */
+.resize-handle {
+    flex-shrink: 0;
+    height: 1px;
+    background: var(--chrome-border-soft);
+    cursor: row-resize;
+    position: relative;
+    z-index: 10;
+}
+.resize-handle::after {
+    content: "";
+    position: absolute;
+    top: -3px;
+    left: 0;
+    right: 0;
+    height: 7px;
+}
+.resize-handle:hover,
+.resize-handle:active {
+    background: var(--accent-primary);
+}
+
+/* Response Section */
+.response-section {
+    min-height: 60px;
+    overflow: hidden;
+}

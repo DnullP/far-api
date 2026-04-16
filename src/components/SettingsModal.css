@@ -1,0 +1,89 @@
+.settings-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+}
+.settings-modal {
+    background: var(--bg-secondary);
+    border: 1px solid var(--chrome-border-strong);
+    border-radius: 10px;
+    width: 360px;
+    box-shadow: var(--chrome-shadow-strong);
+    overflow: hidden;
+}
+.settings-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--chrome-border-soft);
+}
+.settings-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+.settings-close {
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+}
+.settings-close:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+.settings-body {
+    padding: 18px;
+}
+.settings-section {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+.section-label {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-secondary);
+    margin: 0;
+}
+.theme-options {
+    display: flex;
+    gap: 10px;
+}
+.theme-card {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 18px 12px;
+    background: var(--bg-primary);
+    border: 2px solid var(--chrome-border-soft);
+    border-radius: 8px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: border-color 0.15s, color 0.15s;
+}
+.theme-card:hover {
+    border-color: var(--chrome-border-strong);
+    color: var(--text-primary);
+}
+.theme-card.active {
+    border-color: var(--accent-primary);
+    color: var(--accent-primary);
+}
+.theme-card span {
+    font-size: 13px;
+    font-weight: 500;
+}

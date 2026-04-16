@@ -1,0 +1,56 @@
+.welcome-tab {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    padding: 40px;
+    text-align: center;
+}
+.welcome-title {
+    font-size: 32px;
+    font-weight: 700;
+    margin: 0 0 8px;
+    background: linear-gradient(135deg, var(--accent-primary), #a855f7);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+.welcome-subtitle {
+    color: var(--text-secondary);
+    font-size: 16px;
+    margin: 0 0 40px;
+}
+.welcome-features {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 16px;
+    max-width: 480px;
+}
+.feature-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--chrome-border-soft);
+    border-radius: 8px;
+    padding: 20px 16px;
+    text-align: left;
+}
+.feature-card svg {
+    color: var(--accent-primary);
+    margin-bottom: 8px;
+}
+.feature-card h3 {
+    font-size: 14px;
+    margin: 0 0 6px;
+    color: var(--text-primary);
+}
+.feature-card p {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin: 0;
+    line-height: 1.4;
+}
+.welcome-hint {
+    color: var(--text-secondary);
+    font-size: 13px;
+    margin-top: 32px;
+}
