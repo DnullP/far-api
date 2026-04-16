@@ -229,6 +229,22 @@ export async function listHistory(limit?: number, offset?: number): Promise<Hist
     });
 }
 
+export async function fetchAllHistory(batchSize = 200): Promise<HistoryEntry[]> {
+    const entries: HistoryEntry[] = [];
+    let offset = 0;
+
+    while (true) {
+        const page = await listHistory(batchSize, offset);
+        entries.push(...page);
+
+        if (page.length < batchSize) {
+            return entries;
+        }
+
+        offset += page.length;
+    }
+}
+
 export async function clearHistory(): Promise<void> {
     await invoke("clear_history");
 }

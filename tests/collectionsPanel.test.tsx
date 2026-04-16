@@ -53,6 +53,7 @@ function createState(collections: Collection[]): AppState {
         collections,
         environments: [],
         activeEnvironmentId: null,
+        historyEntries: [],
         openRequests: {},
         responses: {},
         loadingRequests: {},

@@ -149,18 +149,49 @@ export function RequestEditor({ params, api }: Props) {
             dispatch({ type: "SET_RESPONSE", tabId, response: result });
 
             // Record to history (fire-and-forget)
+            const requestBody = request.body.type === "none"
+                ? undefined
+                : request.body.type === "json"
+                    ? request.body.json
+                    : request.body.type === "raw"
+                        ? request.body.raw
+                        : JSON.stringify(
+                            request.body.form
+                                .filter((pair) => pair.enabled && pair.key)
+                                .map((pair) => ({ key: pair.key, value: pair.value })),
+                        );
+
             addHistory({
                 requestId: request.id,
                 method: request.method,
                 url: resolvedUrl,
                 requestHeaders: JSON.stringify(resolvedHeaders),
-                requestBody: request.body.type !== "none" ? (request.body.json || request.body.raw || "") : undefined,
+                requestBody,
                 status: result.status,
                 statusText: result.statusText,
                 responseHeaders: JSON.stringify(result.headers),
                 responseBody: result.body,
                 timeMs: result.time,
                 sizeBytes: result.size,
+            }).then((historyId) => {
+                dispatch({
+                    type: "ADD_HISTORY_ENTRY",
+                    entry: {
+                        id: historyId,
+                        requestId: request.id,
+                        method: request.method,
+                        url: resolvedUrl,
+                        requestHeaders: JSON.stringify(resolvedHeaders),
+                        requestBody: requestBody ?? null,
+                        status: result.status,
+                        statusText: result.statusText,
+                        responseHeaders: JSON.stringify(result.headers),
+                        responseBody: result.body,
+                        timeMs: result.time,
+                        sizeBytes: result.size,
+                        createdAt: new Date().toISOString(),
+                    },
+                });
             }).catch(() => {});
         } catch (err) {
             dispatch({

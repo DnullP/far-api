@@ -11,9 +11,10 @@ import { AppStateProvider, useAppDispatch } from "./store/appStore";
 import { RequestEditor } from "./components/RequestEditor";
 import { CollectionsPanel } from "./components/CollectionsPanel";
 import { EnvironmentPanel } from "./components/EnvironmentPanel";
+import { HistoryPanel } from "./components/HistoryPanel";
 import { WelcomeTab } from "./components/WelcomeTab";
 import { SettingsModal, type Theme } from "./components/SettingsModal";
-import { Braces, FolderOpen, Globe, Network, RadioTower, Settings } from "lucide-react";
+import { Braces, FolderOpen, Globe, History, Network, RadioTower, Settings } from "lucide-react";
 import "./App.css";
 
 const THEME_STORAGE_KEY = "far-api.theme";
@@ -57,6 +58,14 @@ const panels: WorkbenchPanelDefinition[] = [
         activityId: "protocol-rest",
         position: "left",
         order: 1,
+    },
+    {
+        id: "panel-rest-history",
+        label: "History",
+        icon: <History size={16} />,
+        activityId: "protocol-rest",
+        position: "left",
+        order: 2,
     },
     {
         id: "panel-graphql-overview",
@@ -149,6 +158,8 @@ function PanelRouter({ panelId, context }: { panelId: string; context: Workbench
             return <CollectionsPanel context={context} />;
         case "panel-rest-env":
             return <EnvironmentPanel />;
+        case "panel-rest-history":
+            return <HistoryPanel />;
         case "panel-graphql-overview":
             return <ProtocolPlaceholderPanel protocol="GraphQL" description="GraphQL workspace is reserved and will be implemented after REST." />;
         case "panel-rpc-overview":

@@ -1,0 +1,94 @@
+.history-panel {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    overflow: hidden;
+}
+
+.history-list {
+    flex: 1;
+    overflow: auto;
+    padding: 6px 0;
+}
+
+.history-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    padding: 20px;
+    color: var(--text-secondary);
+    font-size: 12px;
+    text-align: center;
+}
+
+.history-entry {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--chrome-border-soft);
+}
+
+.history-entry:hover {
+    background: var(--bg-hover);
+}
+
+.history-entry-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.history-method {
+    min-width: 52px;
+    font-size: 10px;
+    font-weight: 700;
+    font-family: "SF Mono", "Fira Code", monospace;
+    letter-spacing: 0.4px;
+}
+
+.history-status {
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.history-status.ok {
+    color: #22c55e;
+}
+
+.history-status.warn {
+    color: #eab308;
+}
+
+.history-status.error {
+    color: #ef4444;
+}
+
+.history-timing {
+    margin-left: auto;
+    color: var(--text-secondary);
+    font-size: 11px;
+    white-space: nowrap;
+}
+
+.history-url {
+    color: var(--text-primary);
+    font-size: 12px;
+    font-family: "SF Mono", "Fira Code", monospace;
+    word-break: break-all;
+}
+
+.history-entry-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    color: var(--text-secondary);
+    font-size: 11px;
+}
+
+.history-size {
+    white-space: nowrap;
+}

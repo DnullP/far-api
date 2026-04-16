@@ -14,6 +14,7 @@ import {
 import {
     fetchCollections,
     fetchEnvironments,
+    fetchAllHistory,
     getConfig,
     setConfig,
     createCollectionApi,
@@ -21,6 +22,7 @@ import {
     updateRequestApi,
     createEnvironmentApi,
     updateEnvironmentApi,
+    type HistoryEntry,
 } from "../services/persistence";
 import { logger } from "../services/logger";
 /* ---------- State shape ---------- */
@@ -29,6 +31,7 @@ export interface AppState {
     collections: Collection[];
     environments: Environment[];
     activeEnvironmentId: string | null;
+    historyEntries: HistoryEntry[];
     /** tabId → request mapping */
     openRequests: Record<string, ApiRequest>;
     /** tabId → response */
@@ -41,6 +44,7 @@ const initialState: AppState = {
     collections: [],
     environments: [],
     activeEnvironmentId: null,
+    historyEntries: [],
     openRequests: {},
     responses: {},
     loadingRequests: {},
@@ -51,6 +55,8 @@ const initialState: AppState = {
 type Action =
     | { type: "LOAD_COLLECTIONS"; collections: Collection[] }
     | { type: "LOAD_ENVIRONMENTS"; environments: Environment[]; activeEnvironmentId: string | null }
+    | { type: "LOAD_HISTORY"; entries: HistoryEntry[] }
+    | { type: "ADD_HISTORY_ENTRY"; entry: HistoryEntry }
     | { type: "ADD_COLLECTION"; collection: Collection }
     | { type: "ADD_REQUEST_TO_COLLECTION"; collectionId: string; request: ApiRequest }
     | { type: "OPEN_REQUEST"; tabId: string; request: ApiRequest }
@@ -192,6 +198,12 @@ function reducer(state: AppState, action: Action): AppState {
         case "LOAD_ENVIRONMENTS": {
             return { ...state, environments: action.environments, activeEnvironmentId: action.activeEnvironmentId };
         }
+        case "LOAD_HISTORY": {
+            return { ...state, historyEntries: action.entries };
+        }
+        case "ADD_HISTORY_ENTRY": {
+            return { ...state, historyEntries: [action.entry, ...state.historyEntries] };
+        }
         case "ADD_COLLECTION": {
             return { ...state, collections: [...state.collections, action.collection] };
         }
@@ -325,10 +337,14 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         (async () => {
             try {
                 logger.info('appStore', 'loading persisted data');
-                const [cols, envs, activeEnvId] = await Promise.all([
+                const [cols, envs, activeEnvId, historyEntries] = await Promise.all([
                     fetchCollections(),
                     fetchEnvironments(),
                     getConfig("activeEnvironmentId"),
+                    fetchAllHistory().catch((err) => {
+                        logger.warn('appStore', 'failed to load history', err);
+                        return [];
+                    }),
                 ]);
 
                 // If DB is empty, seed defaults
@@ -358,6 +374,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
                     dispatch({ type: "LOAD_ENVIRONMENTS", environments: envs, activeEnvironmentId: activeEnvId ?? envs[0]?.id ?? null });
                 }
                 logger.info('appStore', `loaded ${envs.length} environments`);
+                dispatch({ type: "LOAD_HISTORY", entries: historyEntries });
+                logger.info('appStore', `loaded ${historyEntries.length} history entries`);
             } catch (err) {
                 logger.warn('appStore', 'failed to load from backend, using defaults', err);
             }
