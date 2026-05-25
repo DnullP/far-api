@@ -18,6 +18,19 @@ export interface RequestBody {
     raw: string;
 }
 
+export type AuthType = "none" | "bearer" | "basic" | "apiKey";
+export type ApiKeyPlacement = "header" | "query";
+
+export interface RequestAuth {
+    type: AuthType;
+    bearerToken: string;
+    basicUsername: string;
+    basicPassword: string;
+    apiKeyName: string;
+    apiKeyValue: string;
+    apiKeyPlacement: ApiKeyPlacement;
+}
+
 export interface ApiRequest {
     id: string;
     name: string;
@@ -26,6 +39,7 @@ export interface ApiRequest {
     params: KeyValuePair[];
     headers: KeyValuePair[];
     body: RequestBody;
+    auth: RequestAuth;
 }
 
 export interface ApiResponse {
@@ -70,6 +84,19 @@ export function createKeyValuePair(key = "", value = ""): KeyValuePair {
     return { id: crypto.randomUUID(), key, value, enabled: true };
 }
 
+export function createRequestAuth(overrides: Partial<RequestAuth> = {}): RequestAuth {
+    return {
+        type: "none",
+        bearerToken: "",
+        basicUsername: "",
+        basicPassword: "",
+        apiKeyName: "",
+        apiKeyValue: "",
+        apiKeyPlacement: "header",
+        ...overrides,
+    };
+}
+
 export function createRequest(name = "New Request"): ApiRequest {
     return {
         id: crypto.randomUUID(),
@@ -79,6 +106,7 @@ export function createRequest(name = "New Request"): ApiRequest {
         params: [createKeyValuePair()],
         headers: [createKeyValuePair()],
         body: { type: "none", json: "{}", form: [createKeyValuePair()], raw: "" },
+        auth: createRequestAuth(),
     };
 }
 

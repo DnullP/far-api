@@ -7,49 +7,45 @@
  *   logger.error('appStore', 'failed to load', { err });
  */
 
-import { invoke } from '@tauri-apps/api/core';
+import { forwardFrontendLog, type FrontendLogEntry } from "../api/logApi";
+import { safeStringify } from "../api/logSanitizer";
 
-type LogLevel = 'error' | 'warn' | 'info' | 'debug';
-
-interface LogEntry {
-  level: LogLevel;
-  module: string;
-  message: string;
-  data?: string;
-}
-
-function send(entry: LogEntry) {
+function send(entry: FrontendLogEntry) {
   // Fire-and-forget: don't await, don't let failures propagate
-  invoke('frontend_log', { entry }).catch(() => {});
+  forwardFrontendLog({
+    ...entry,
+    href: typeof window === "undefined" ? undefined : window.location.href,
+    ts: Date.now(),
+  }).catch(() => {});
 }
 
 function formatData(data?: unknown): string | undefined {
   if (data === undefined || data === null) return undefined;
-  try {
-    return typeof data === 'string' ? data : JSON.stringify(data);
-  } catch {
-    return String(data);
-  }
+  return typeof data === 'string' ? data : safeStringify(data);
 }
 
 export const logger = {
   error(module: string, message: string, data?: unknown) {
-    console.error(`[${module}]`, message, data ?? '');
-    send({ level: 'error', module, message, data: formatData(data) });
+    const formatted = formatData(data);
+    console.error(`[logger:${module}]`, message, formatted ?? '');
+    send({ level: 'error', module, message, data: formatted });
   },
 
   warn(module: string, message: string, data?: unknown) {
-    console.warn(`[${module}]`, message, data ?? '');
-    send({ level: 'warn', module, message, data: formatData(data) });
+    const formatted = formatData(data);
+    console.warn(`[logger:${module}]`, message, formatted ?? '');
+    send({ level: 'warn', module, message, data: formatted });
   },
 
   info(module: string, message: string, data?: unknown) {
-    console.info(`[${module}]`, message, data ?? '');
-    send({ level: 'info', module, message, data: formatData(data) });
+    const formatted = formatData(data);
+    console.info(`[logger:${module}]`, message, formatted ?? '');
+    send({ level: 'info', module, message, data: formatted });
   },
 
   debug(module: string, message: string, data?: unknown) {
-    console.debug(`[${module}]`, message, data ?? '');
-    send({ level: 'debug', module, message, data: formatData(data) });
+    const formatted = formatData(data);
+    console.debug(`[logger:${module}]`, message, formatted ?? '');
+    send({ level: 'debug', module, message, data: formatted });
   },
 };

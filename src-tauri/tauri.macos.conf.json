@@ -1,0 +1,28 @@
+{
+  "app": {
+    "macOSPrivateApi": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "Far API",
+        "width": 1200,
+        "height": 800,
+        "dragDropEnabled": false,
+        "transparent": true,
+        "backgroundColor": [0, 0, 0, 0],
+        "decorations": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": {
+          "x": 14,
+          "y": 16
+        }
+      }
+    ]
+  },
+  "bundle": {
+    "macOS": {
+      "signingIdentity": "-"
+    }
+  }
+}

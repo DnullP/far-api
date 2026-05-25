@@ -1,6 +1,10 @@
 /* far-api global theme */
 :root,
 :root[data-theme="dark"] {
+    --far-api-titlebar-height: 38px;
+    --far-api-window-control-width: 104px;
+    --far-api-left-activity-bar-width: 48px;
+    --far-api-left-sidebar-panel-safe-padding: 40px;
     --bg-primary: #1e1e1e;
     --bg-secondary: #252526;
     --bg-hover: #2a2d2e;
@@ -65,10 +69,52 @@ button {
     font: inherit;
 }
 
+.far-api-shell {
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+    background: var(--bg-primary);
+}
+
 /* Workbench fills viewport */
 .far-api-workbench {
     width: 100%;
-    height: 100vh;
+    height: 100%;
+}
+
+.far-api-shell--tauri.far-api-shell--mac .far-api-workbench .layout-v2-activity-bar {
+    padding-top: var(--far-api-titlebar-height);
+}
+
+.far-api-shell--tauri.far-api-shell--mac .far-api-workbench .layout-v2-tab-section__strip,
+.far-api-shell--tauri.far-api-shell--mac .far-api-workbench .layout-v2-panel-section__bar {
+    height: var(--far-api-titlebar-height);
+    min-height: var(--far-api-titlebar-height);
+}
+
+.far-api-shell--tauri.far-api-shell--mac .far-api-workbench:not(:has([data-testid="sidebar-left"])) .layout-v2-tab-section__strip {
+    padding-left: max(0px, calc(var(--far-api-window-control-width) - var(--far-api-left-activity-bar-width)));
+}
+
+.far-api-shell--tauri.far-api-shell--mac .far-api-workbench [data-testid="sidebar-left"] > .layout-v2-panel-section__bar {
+    padding-left: var(--far-api-left-sidebar-panel-safe-padding);
+}
+
+.far-api-shell--tauri .layout-v2-tab-section__strip,
+.far-api-shell--tauri .layout-v2-panel-section__bar,
+.far-api-shell--tauri .layout-v2-activity-bar {
+    -webkit-app-region: drag;
+    app-region: drag;
+}
+
+.far-api-shell--tauri .window-no-drag,
+.far-api-shell--tauri button,
+.far-api-shell--tauri input,
+.far-api-shell--tauri textarea,
+.far-api-shell--tauri select {
+    -webkit-app-region: no-drag;
+    app-region: no-drag;
 }
 
 /* Sidebar panel: flush content, no rounded corners or outer border */

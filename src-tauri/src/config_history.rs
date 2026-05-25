@@ -3,11 +3,28 @@ use log::{debug, error, info};
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
 
+pub const CONFIG_COMMAND_IDS: &[&str] = &["get_config", "set_config", "get_all_config"];
+
+pub const HISTORY_COMMAND_IDS: &[&str] = &[
+    "add_history",
+    "list_history",
+    "clear_history",
+    "delete_history_entry",
+];
+
+fn trace_ref(trace_id: &Option<String>) -> &str {
+    trace_id.as_deref().unwrap_or("none")
+}
+
 /* ---------- Config ---------- */
 
 #[tauri::command]
-pub fn get_config(db: tauri::State<'_, Db>, key: String) -> Result<Option<String>, String> {
-    debug!("[config] get key={}", key);
+pub fn get_config(
+    db: tauri::State<'_, Db>,
+    key: String,
+    trace_id: Option<String>,
+) -> Result<Option<String>, String> {
+    debug!("[trace={}] [config] get key={}", trace_ref(&trace_id), key);
     let conn = db.conn();
     let mut stmt = conn
         .prepare("SELECT value FROM config WHERE key = ?1")
@@ -15,25 +32,39 @@ pub fn get_config(db: tauri::State<'_, Db>, key: String) -> Result<Option<String
     let result = stmt
         .query_row(params![key], |row| row.get::<_, String>(0))
         .ok();
-    debug!("[config] get key={} found={}", key, result.is_some());
+    debug!(
+        "[trace={}] [config] get key={} found={}",
+        trace_ref(&trace_id),
+        key,
+        result.is_some(),
+    );
     Ok(result)
 }
 
 #[tauri::command]
-pub fn set_config(db: tauri::State<'_, Db>, key: String, value: String) -> Result<(), String> {
-    info!("[config] set key={}", key);
+pub fn set_config(
+    db: tauri::State<'_, Db>,
+    key: String,
+    value: String,
+    trace_id: Option<String>,
+) -> Result<(), String> {
+    info!("[trace={}] [config] set key={}", trace_ref(&trace_id), key);
     let conn = db.conn();
     conn.execute(
         "INSERT INTO config (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         params![key, value],
     )
     .map_err(|e| { error!("[config] set failed key={}: {}", key, e); e.to_string() })?;
+    info!("[trace={}] [config] set complete key={}", trace_ref(&trace_id), key);
     Ok(())
 }
 
 #[tauri::command]
-pub fn get_all_config(db: tauri::State<'_, Db>) -> Result<Vec<(String, String)>, String> {
-    debug!("[config] get_all");
+pub fn get_all_config(
+    db: tauri::State<'_, Db>,
+    trace_id: Option<String>,
+) -> Result<Vec<(String, String)>, String> {
+    debug!("[trace={}] [config] get_all", trace_ref(&trace_id));
     let conn = db.conn();
     let mut stmt = conn
         .prepare("SELECT key, value FROM config ORDER BY key")
@@ -43,7 +74,11 @@ pub fn get_all_config(db: tauri::State<'_, Db>) -> Result<Vec<(String, String)>,
         .map_err(|e| e.to_string())?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
-    debug!("[config] get_all returned {} entries", rows.len());
+    debug!(
+        "[trace={}] [config] get_all returned {} entries",
+        trace_ref(&trace_id),
+        rows.len(),
+    );
     Ok(rows)
 }
 
@@ -99,9 +134,20 @@ pub struct AddHistoryInput {
 }
 
 #[tauri::command]
-pub fn add_history(db: tauri::State<'_, Db>, entry: AddHistoryInput) -> Result<String, String> {
+pub fn add_history(
+    db: tauri::State<'_, Db>,
+    entry: AddHistoryInput,
+    trace_id: Option<String>,
+) -> Result<String, String> {
     let id = uuid_v4();
-    info!("[history] add {} {} status={} time={}ms", entry.method, entry.url, entry.status, entry.time_ms);
+    info!(
+        "[trace={}] [history] add {} {} status={} time={}ms",
+        trace_ref(&trace_id),
+        entry.method,
+        entry.url,
+        entry.status,
+        entry.time_ms,
+    );
     let conn = db.conn();
     conn.execute(
         "INSERT INTO request_history (id, request_id, method, url, request_headers, request_body, status, status_text, response_headers, response_body, time_ms, size_bytes)
@@ -122,7 +168,7 @@ pub fn add_history(db: tauri::State<'_, Db>, entry: AddHistoryInput) -> Result<S
         ],
     )
     .map_err(|e| { error!("[history] add failed: {}", e); e.to_string() })?;
-    debug!("[history] added id={}", id);
+    debug!("[trace={}] [history] added id={}", trace_ref(&trace_id), id);
     Ok(id)
 }
 
@@ -131,10 +177,16 @@ pub fn list_history(
     db: tauri::State<'_, Db>,
     limit: Option<i64>,
     offset: Option<i64>,
+    trace_id: Option<String>,
 ) -> Result<Vec<HistoryEntry>, String> {
     let lim = limit.unwrap_or(50);
     let off = offset.unwrap_or(0);
-    debug!("[history] list limit={} offset={}", lim, off);
+    debug!(
+        "[trace={}] [history] list limit={} offset={}",
+        trace_ref(&trace_id),
+        lim,
+        off,
+    );
     let conn = db.conn();
     let mut stmt = conn
         .prepare(
@@ -167,25 +219,38 @@ pub fn list_history(
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
 
-    debug!("[history] list returned {} entries", rows.len());
+    debug!(
+        "[trace={}] [history] list returned {} entries",
+        trace_ref(&trace_id),
+        rows.len(),
+    );
     Ok(rows)
 }
 
 #[tauri::command]
-pub fn clear_history(db: tauri::State<'_, Db>) -> Result<(), String> {
-    info!("[history] clear all");
+pub fn clear_history(
+    db: tauri::State<'_, Db>,
+    trace_id: Option<String>,
+) -> Result<(), String> {
+    info!("[trace={}] [history] clear all", trace_ref(&trace_id));
     let conn = db.conn();
     conn.execute("DELETE FROM request_history", [])
         .map_err(|e| { error!("[history] clear failed: {}", e); e.to_string() })?;
+    info!("[trace={}] [history] cleared", trace_ref(&trace_id));
     Ok(())
 }
 
 #[tauri::command]
-pub fn delete_history_entry(db: tauri::State<'_, Db>, id: String) -> Result<(), String> {
-    info!("[history] delete id={}", id);
+pub fn delete_history_entry(
+    db: tauri::State<'_, Db>,
+    id: String,
+    trace_id: Option<String>,
+) -> Result<(), String> {
+    info!("[trace={}] [history] delete id={}", trace_ref(&trace_id), id);
     let conn = db.conn();
     conn.execute("DELETE FROM request_history WHERE id = ?1", params![id])
         .map_err(|e| { error!("[history] delete failed id={}: {}", id, e); e.to_string() })?;
+    info!("[trace={}] [history] deleted id={}", trace_ref(&trace_id), id);
     Ok(())
 }
 

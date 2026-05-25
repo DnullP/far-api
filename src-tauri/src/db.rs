@@ -49,6 +49,7 @@ impl Db {
                 params_json     TEXT NOT NULL DEFAULT '[]',
                 headers_json    TEXT NOT NULL DEFAULT '[]',
                 body_json       TEXT NOT NULL DEFAULT '{\"type\":\"none\",\"json\":\"{}\",\"form\":[],\"raw\":\"\"}',
+                auth_json       TEXT NOT NULL DEFAULT '{\"type\":\"none\",\"bearerToken\":\"\",\"basicUsername\":\"\",\"basicPassword\":\"\",\"apiKeyName\":\"\",\"apiKeyValue\":\"\",\"apiKeyPlacement\":\"header\"}',
                 sort_order      INTEGER NOT NULL DEFAULT 0,
                 created_at      TEXT NOT NULL DEFAULT (datetime('now')),
                 updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
@@ -98,6 +99,30 @@ impl Db {
             CREATE INDEX IF NOT EXISTS idx_history_request ON request_history(request_id);
             ",
         )?;
+        add_column_if_missing(
+            &conn,
+            "requests",
+            "auth_json",
+            "TEXT NOT NULL DEFAULT '{\"type\":\"none\",\"bearerToken\":\"\",\"basicUsername\":\"\",\"basicPassword\":\"\",\"apiKeyName\":\"\",\"apiKeyValue\":\"\",\"apiKeyPlacement\":\"header\"}'",
+        )?;
         Ok(())
     }
+}
+
+fn add_column_if_missing(
+    conn: &Connection,
+    table: &str,
+    column: &str,
+    definition: &str,
+) -> Result<()> {
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+    let columns = stmt
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<Vec<_>>>()?;
+
+    if columns.iter().any(|item| item == column) {
+        return Ok(());
+    }
+
+    conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {definition};"))
 }

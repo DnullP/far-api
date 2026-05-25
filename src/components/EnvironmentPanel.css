@@ -4,90 +4,273 @@
     height: 100%;
     overflow: hidden;
 }
+
 .env-list {
     flex: 1;
     overflow: auto;
     padding: 4px 0;
 }
+
 .env-item {
-    margin-bottom: 4px;
-    border-bottom: 1px solid var(--chrome-border-soft);
-}
-.env-item.active {
-    background: var(--accent-primary-soft-weak);
-}
-.env-header {
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 6px 10px;
+    gap: 2px;
+    padding: 2px 8px;
+    color: var(--text-primary);
+    user-select: none;
+    -webkit-user-select: none;
 }
-.env-activate {
-    width: 20px;
-    height: 20px;
-    border-radius: 50%;
-    border: 2px solid var(--chrome-border-strong);
-    background: transparent;
-    cursor: pointer;
+
+.env-item:hover,
+.env-item.active {
+    background: var(--bg-hover);
+}
+
+.env-name-button {
+    flex: 1;
+    min-width: 0;
     display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 28px;
+    padding: 0 4px;
+    border: none;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    text-align: left;
+}
+
+.env-active-dot {
+    flex: 0 0 16px;
+    width: 16px;
+    height: 16px;
+    border: 1px solid var(--chrome-border-strong);
+    border-radius: 50%;
+    display: inline-flex;
     align-items: center;
     justify-content: center;
     color: transparent;
-    padding: 0;
-    flex-shrink: 0;
 }
-.env-activate.active {
+
+.env-item.active .env-active-dot {
     border-color: var(--accent-primary);
     background: var(--accent-primary);
     color: var(--accent-primary-foreground);
 }
+
 .env-name {
     flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     font-size: 13px;
-    font-weight: 500;
+}
+
+.env-action-btn {
+    flex: 0 0 24px;
+    width: 24px;
+    height: 24px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    opacity: 0;
+}
+
+.env-item:hover .env-action-btn,
+.env-item.active .env-action-btn,
+.env-action-btn:focus-visible {
+    opacity: 1;
+}
+
+.env-action-btn:hover {
+    background: var(--bg-primary);
     color: var(--text-primary);
 }
-.env-vars {
-    padding: 0 10px 8px 36px;
+
+.env-action-btn.danger:hover {
+    color: #f87171;
 }
-.env-var-row {
+
+.env-modal-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 10000;
     display: flex;
     align-items: center;
-    gap: 4px;
-    margin-bottom: 2px;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.45);
 }
-.env-var-row input[type="checkbox"] {
-    accent-color: var(--accent-primary);
-    flex-shrink: 0;
+
+.env-modal {
+    width: min(640px, calc(100vw - 32px));
+    max-height: min(720px, calc(100vh - 32px));
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-secondary);
+    border: 1px solid var(--chrome-border-strong);
+    border-radius: 8px;
+    box-shadow: var(--chrome-shadow-strong);
+    overflow: hidden;
 }
-.var-key,
-.var-value {
-    flex: 1;
-    background: transparent;
-    border: 1px solid transparent;
+
+.env-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--chrome-border-soft);
+}
+
+.env-modal-title {
+    font-size: 13px;
+    font-weight: 600;
     color: var(--text-primary);
-    padding: 2px 6px;
-    font-size: 12px;
-    font-family: "SF Mono", "Fira Code", monospace;
-    border-radius: 3px;
-    min-width: 0;
 }
-.var-key:focus,
-.var-value:focus {
-    outline: none;
-    border-color: var(--accent-primary);
-}
-.var-key {
-    color: var(--accent-primary);
-}
-.add-var-btn {
+
+.env-modal-close,
+.env-modal-icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
     background: transparent;
     border: none;
+    border-radius: 4px;
     color: var(--text-secondary);
-    font-size: 11px;
     cursor: pointer;
-    padding: 4px 0;
 }
-.add-var-btn:hover {
+
+.env-modal-close {
+    width: 24px;
+    height: 24px;
+}
+
+.env-modal-icon-btn {
+    flex: 0 0 26px;
+    width: 26px;
+    height: 26px;
+}
+
+.env-modal-close:hover,
+.env-modal-icon-btn:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.env-modal-body {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 14px;
+    overflow: auto;
+}
+
+.env-modal-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.env-modal-field input,
+.env-modal-var-row input {
+    height: 28px;
+    background: var(--bg-primary);
+    border: 1px solid var(--chrome-border-strong);
+    border-radius: 4px;
+    color: var(--text-primary);
+    padding: 0 8px;
+    outline: none;
+}
+
+.env-modal-field input:focus,
+.env-modal-var-row input:focus {
+    border-color: var(--accent-primary);
+}
+
+.env-modal-vars {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.env-modal-section-title {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+}
+
+.env-modal-var-row {
+    display: grid;
+    grid-template-columns: 18px minmax(0, 1fr) minmax(0, 1fr) 26px;
+    align-items: center;
+    gap: 6px;
+}
+
+.env-modal-var-row input[type="checkbox"] {
+    width: 14px;
+    height: 14px;
+    accent-color: var(--accent-primary);
+}
+
+.env-modal-var-key,
+.env-modal-var-value {
+    min-width: 0;
+    font-family: "SF Mono", "Fira Code", monospace;
+    font-size: 12px;
+}
+
+.env-add-var-btn {
+    width: fit-content;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 0;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 12px;
+}
+
+.env-add-var-btn:hover {
     color: var(--accent-primary);
+}
+
+.env-modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 12px 14px;
+    border-top: 1px solid var(--chrome-border-soft);
+}
+
+.env-modal-primary,
+.env-modal-secondary {
+    height: 28px;
+    padding: 0 12px;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.env-modal-primary {
+    border: 1px solid var(--accent-primary);
+    background: var(--accent-primary);
+    color: var(--accent-primary-foreground);
+}
+
+.env-modal-secondary {
+    border: 1px solid var(--chrome-border-strong);
+    background: transparent;
+    color: var(--text-primary);
 }

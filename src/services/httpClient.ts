@@ -1,4 +1,5 @@
-import { invoke } from "@tauri-apps/api/core";
+import { FAR_API_COMMANDS } from "../api/commandIds";
+import { invokeCommand } from "../api/tauriClient";
 import { logger } from "./logger";
 import type { HttpMethod, RequestBody } from "../types/api";
 import type { ApiResponse } from "../types/api";
@@ -66,7 +67,7 @@ export async function sendRequest(input: SendRequestInput): Promise<ApiResponse>
     // Use Tauri command if available, fallback to fetch
     try {
         logger.info('httpClient', `${method} ${fullUrl}`);
-        const res = await invoke<TauriHttpResponse>("http_request", {
+        const res = await invokeCommand<TauriHttpResponse>(FAR_API_COMMANDS.httpRequest, {
             input: { method, url: fullUrl, headers, body: bodyStr },
         });
         logger.info('httpClient', `response ${res.status} ${res.status_text} ${res.time}ms`);

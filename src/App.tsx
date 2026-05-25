@@ -1,20 +1,22 @@
-import { useRef, useState, useCallback, type ReactNode } from "react";
+import { useRef, useState, useCallback, useMemo, type ReactNode } from "react";
 import {
     VSCodeWorkbench,
-    type WorkbenchActivityDefinition,
-    type WorkbenchPanelDefinition,
     type WorkbenchApi,
     type WorkbenchPanelContext,
 } from "layout-v2";
 import "layout-v2/styles.css";
 import { AppStateProvider, useAppDispatch } from "./store/appStore";
-import { RequestEditor } from "./components/RequestEditor";
-import { CollectionsPanel } from "./components/CollectionsPanel";
-import { EnvironmentPanel } from "./components/EnvironmentPanel";
-import { HistoryPanel } from "./components/HistoryPanel";
-import { WelcomeTab } from "./components/WelcomeTab";
 import { SettingsModal, type Theme } from "./components/SettingsModal";
-import { Braces, FolderOpen, Globe, History, Network, RadioTower, Settings } from "lucide-react";
+import {
+    ensureWorkbenchContributionsRegistered,
+    renderRegisteredPanel,
+} from "./host/contributions/workbenchContributions";
+import {
+    getActivityById,
+    useActivityDefinitions,
+    usePanelDefinitions,
+    useTabComponentRenderers,
+} from "./host/registry";
 import "./App.css";
 
 const THEME_STORAGE_KEY = "far-api.theme";
@@ -33,65 +35,46 @@ function resolveInitialTheme(): Theme {
     return documentTheme === "light" ? "light" : "dark";
 }
 
-/* ---------- Layout definitions ---------- */
+function isTauriRuntime(): boolean {
+    if (typeof window === "undefined") {
+        return false;
+    }
 
-const activities: WorkbenchActivityDefinition[] = [
-    { id: "protocol-rest", label: "REST", bar: "left", section: "top", icon: <Network size={20} /> },
-    { id: "protocol-graphql", label: "GraphQL", bar: "left", section: "top", icon: <Braces size={20} /> },
-    { id: "protocol-rpc", label: "RPC", bar: "left", section: "top", icon: <RadioTower size={20} /> },
-    { id: "settings", label: "Settings", bar: "left", section: "bottom", activationMode: "action", icon: <Settings size={20} /> },
-];
+    const runtimeWindow = window as Window & {
+        __TAURI_INTERNALS__?: unknown;
+        __TAURI__?: unknown;
+    };
+    return Boolean(runtimeWindow.__TAURI_INTERNALS__ || runtimeWindow.__TAURI__);
+}
 
-const panels: WorkbenchPanelDefinition[] = [
-    {
-        id: "panel-rest-collections",
-        label: "Collections",
-        icon: <FolderOpen size={16} />,
-        activityId: "protocol-rest",
-        position: "left",
-        order: 0,
-    },
-    {
-        id: "panel-rest-env",
-        label: "Environments",
-        icon: <Globe size={16} />,
-        activityId: "protocol-rest",
-        position: "left",
-        order: 1,
-    },
-    {
-        id: "panel-rest-history",
-        label: "History",
-        icon: <History size={16} />,
-        activityId: "protocol-rest",
-        position: "left",
-        order: 2,
-    },
-    {
-        id: "panel-graphql-overview",
-        label: "GraphQL",
-        icon: <Braces size={16} />,
-        activityId: "protocol-graphql",
-        position: "left",
-        order: 0,
-    },
-    {
-        id: "panel-rpc-overview",
-        label: "RPC",
-        icon: <RadioTower size={16} />,
-        activityId: "protocol-rpc",
-        position: "left",
-        order: 0,
-    },
-];
+function isMacPlatform(): boolean {
+    if (typeof navigator === "undefined") {
+        return false;
+    }
+
+    return `${navigator.userAgent} ${navigator.platform}`.toLowerCase().includes("mac");
+}
+
+function resolveShellClassName(): string {
+    return [
+        "far-api-shell",
+        isTauriRuntime() ? "far-api-shell--tauri" : "",
+        isMacPlatform() ? "far-api-shell--mac" : "",
+    ].filter(Boolean).join(" ");
+}
 
 /* ---------- Component ---------- */
 
 function AppContent(): ReactNode {
+    ensureWorkbenchContributionsRegistered();
     const apiRef = useRef<WorkbenchApi | null>(null);
     const dispatch = useAppDispatch();
     const [settingsOpen, setSettingsOpen] = useState(false);
     const [theme, setTheme] = useState<Theme>(resolveInitialTheme);
+    const shellClassName = useMemo(resolveShellClassName, []);
+    const activities = useActivityDefinitions();
+    const panels = usePanelDefinitions();
+    const tabComponents = useTabComponentRenderers();
 
     const handleThemeChange = useCallback((t: Theme) => {
         setTheme(t);
@@ -100,7 +83,8 @@ function AppContent(): ReactNode {
     }, []);
 
     const handleActivateActivity = useCallback(
-        (activityId: string) => {
+        (activityId: string, context: WorkbenchPanelContext) => {
+            getActivityById(activityId)?.onActivate?.(context);
             if (activityId === "settings") {
                 setSettingsOpen(true);
             }
@@ -110,38 +94,35 @@ function AppContent(): ReactNode {
 
     return (
         <>
-            <VSCodeWorkbench
-                activities={activities}
-                panels={panels}
-                tabComponents={{
-                    "request-editor": (props) => <RequestEditor params={props.params} api={props.api} />,
-                    welcome: () => <WelcomeTab />,
-                }}
-                initialTabs={[
-                    { id: "welcome-tab", title: "Welcome", component: "welcome" },
-                ]}
-                hideEmptyPanelBar
-                initialSidebarState={{
-                    left: {
-                        visible: true,
-                        activeActivityId: "protocol-rest",
-                        activePanelId: "panel-rest-collections",
-                    },
-                    right: {
-                        visible: false,
-                        activeActivityId: null,
-                        activePanelId: null,
-                    },
-                }}
-                renderActivityIcon={(act) => act.icon ?? <span>{act.label[0]}</span>}
-                renderPanelContent={(panelId, context) => (
-                    <PanelRouter panelId={panelId} context={context} />
-                )}
-                onActivateActivity={handleActivateActivity}
-                onCloseTab={(tabId) => dispatch({ type: "REMOVE_TAB", tabId })}
-                apiRef={apiRef}
-                className="far-api-workbench"
-            />
+            <div className={shellClassName}>
+                <VSCodeWorkbench
+                    activities={activities}
+                    panels={panels}
+                    tabComponents={tabComponents}
+                    initialTabs={[
+                        { id: "welcome-tab", title: "Welcome", component: "welcome" },
+                    ]}
+                    hideEmptyPanelBar
+                    initialSidebarState={{
+                        left: {
+                            visible: true,
+                            activeActivityId: "protocol-rest",
+                            activePanelId: "panel-rest-collections",
+                        },
+                        right: {
+                            visible: false,
+                            activeActivityId: null,
+                            activePanelId: null,
+                        },
+                    }}
+                    renderActivityIcon={(act) => act.icon ?? <span>{act.label[0]}</span>}
+                    renderPanelContent={renderRegisteredPanel}
+                    onActivateActivity={handleActivateActivity}
+                    onCloseTab={(tabId) => dispatch({ type: "REMOVE_TAB", tabId })}
+                    apiRef={apiRef}
+                    className="far-api-workbench"
+                />
+            </div>
             <SettingsModal
                 open={settingsOpen}
                 theme={theme}
@@ -149,42 +130,6 @@ function AppContent(): ReactNode {
                 onClose={() => setSettingsOpen(false)}
             />
         </>
-    );
-}
-
-function PanelRouter({ panelId, context }: { panelId: string; context: WorkbenchPanelContext }): ReactNode {
-    switch (panelId) {
-        case "panel-rest-collections":
-            return <CollectionsPanel context={context} />;
-        case "panel-rest-env":
-            return <EnvironmentPanel />;
-        case "panel-rest-history":
-            return <HistoryPanel />;
-        case "panel-graphql-overview":
-            return <ProtocolPlaceholderPanel protocol="GraphQL" description="GraphQL workspace is reserved and will be implemented after REST." />;
-        case "panel-rpc-overview":
-            return <ProtocolPlaceholderPanel protocol="RPC" description="RPC workspace is reserved and will be implemented after REST." />;
-        default:
-            return <div style={{ padding: 16 }}>Panel: {panelId}</div>;
-    }
-}
-
-function ProtocolPlaceholderPanel({ protocol, description }: { protocol: string; description: string }): ReactNode {
-    return (
-        <div
-            style={{
-                height: "100%",
-                display: "flex",
-                flexDirection: "column",
-                justifyContent: "center",
-                padding: 20,
-                gap: 8,
-                color: "var(--text-secondary)",
-            }}
-        >
-            <strong style={{ color: "var(--text-primary)", fontSize: 13 }}>{protocol}</strong>
-            <span style={{ fontSize: 12, lineHeight: 1.5 }}>{description}</span>
-        </div>
     );
 }
 

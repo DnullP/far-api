@@ -1,12 +1,15 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import type { WorkbenchTabApi } from "layout-v2";
-import { type HttpMethod, type BodyType, type ApiRequest, type KeyValuePair } from "../types/api";
-import { useAppState, useAppDispatch, interpolateVariables } from "../store/appStore";
+import { type HttpMethod, type BodyType, type ApiRequest, type KeyValuePair, type RequestAuth } from "../types/api";
+import { createRequestAuth } from "../types/api";
+import { useAppState, useAppDispatch } from "../store/appStore";
 import { KeyValueEditor } from "./KeyValueEditor";
 import { ResponseViewer } from "./ResponseViewer";
 import { sendRequest } from "../services/httpClient";
 import { updateRequestApi, addHistory } from "../services/persistence";
-import { Send, ChevronDown } from "lucide-react";
+import { resolveRequest } from "../services/requestResolver";
+import { parseCurlCommand } from "../services/curlImporter";
+import { Send, ChevronDown, Import, X } from "lucide-react";
 import "./RequestEditor.css";
 
 const METHODS: HttpMethod[] = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
@@ -21,7 +24,9 @@ const METHOD_COLORS: Record<HttpMethod, string> = {
     OPTIONS: "#64748b",
 };
 
-type ReqTab = "params" | "headers" | "body";
+const CURL_PREFIX_PATTERN = /^\s*(?:curl\s|curl$)/i;
+
+type ReqTab = "params" | "headers" | "auth" | "body";
 
 interface Props {
     params: Record<string, unknown>;
@@ -38,6 +43,9 @@ export function RequestEditor({ params, api }: Props) {
 
     const [activeTab, setActiveTab] = useState<ReqTab>("params");
     const [methodOpen, setMethodOpen] = useState(false);
+    const [curlModalOpen, setCurlModalOpen] = useState(false);
+    const [curlDraft, setCurlDraft] = useState("");
+    const [curlError, setCurlError] = useState("");
     const methodRef = useRef<HTMLDivElement>(null);
 
     // Resizable split state
@@ -107,6 +115,32 @@ export function RequestEditor({ params, api }: Props) {
         [api, dispatch, request, state.collections],
     );
 
+    const importCurl = useCallback(
+        (command: string): boolean => {
+            if (!request) return false;
+
+            try {
+                const parsed = parseCurlCommand(command);
+                updateReq(parsed);
+                api.setTitle(`${parsed.method} ${request.name}`);
+                setCurlError("");
+                setCurlModalOpen(false);
+                setCurlDraft("");
+                return true;
+            } catch (error) {
+                setCurlError(error instanceof Error ? error.message : "Could not parse cURL command.");
+                return false;
+            }
+        },
+        [api, request, updateReq],
+    );
+
+    const openCurlModal = useCallback((initialDraft = "") => {
+        setCurlDraft(initialDraft);
+        setCurlError("");
+        setCurlModalOpen(true);
+    }, []);
+
     const updateParams = useCallback(
         (pairs: KeyValuePair[]) => updateReq({ params: pairs }),
         [updateReq],
@@ -120,52 +154,41 @@ export function RequestEditor({ params, api }: Props) {
             updateReq({ body: { ...request!.body, form: pairs } }),
         [updateReq, request],
     );
+    const updateAuth = useCallback(
+        (patch: Partial<RequestAuth>) => {
+            const currentAuth = createRequestAuth(request?.auth);
+            updateReq({ auth: { ...currentAuth, ...patch } });
+        },
+        [request?.auth, updateReq],
+    );
 
     const handleSend = useCallback(async () => {
         if (!request) return;
         dispatch({ type: "SET_LOADING", tabId, loading: true });
         dispatch({ type: "SET_RESPONSE", tabId, response: null });
         try {
-            const resolvedUrl = interpolateVariables(request.url, state);
-            const resolvedHeaders: Record<string, string> = {};
-            for (const h of request.headers) {
-                if (h.enabled && h.key) {
-                    resolvedHeaders[interpolateVariables(h.key, state)] =
-                        interpolateVariables(h.value, state);
-                }
-            }
-            const result = await sendRequest({
-                method: request.method,
-                url: resolvedUrl,
-                headers: resolvedHeaders,
-                params: request.params
-                    .filter((p) => p.enabled && p.key)
-                    .map((p) => ({
-                        key: interpolateVariables(p.key, state),
-                        value: interpolateVariables(p.value, state),
-                    })),
-                body: request.body,
-            });
+            const resolvedRequest = resolveRequest(request, state);
+            const result = await sendRequest(resolvedRequest);
             dispatch({ type: "SET_RESPONSE", tabId, response: result });
 
             // Record to history (fire-and-forget)
-            const requestBody = request.body.type === "none"
+            const requestBody = resolvedRequest.body.type === "none"
                 ? undefined
-                : request.body.type === "json"
-                    ? request.body.json
-                    : request.body.type === "raw"
-                        ? request.body.raw
+                : resolvedRequest.body.type === "json"
+                    ? resolvedRequest.body.json
+                    : resolvedRequest.body.type === "raw"
+                        ? resolvedRequest.body.raw
                         : JSON.stringify(
-                            request.body.form
+                            resolvedRequest.body.form
                                 .filter((pair) => pair.enabled && pair.key)
                                 .map((pair) => ({ key: pair.key, value: pair.value })),
                         );
 
             addHistory({
                 requestId: request.id,
-                method: request.method,
-                url: resolvedUrl,
-                requestHeaders: JSON.stringify(resolvedHeaders),
+                method: resolvedRequest.method,
+                url: resolvedRequest.url,
+                requestHeaders: JSON.stringify(resolvedRequest.headers),
                 requestBody,
                 status: result.status,
                 statusText: result.statusText,
@@ -179,9 +202,9 @@ export function RequestEditor({ params, api }: Props) {
                     entry: {
                         id: historyId,
                         requestId: request.id,
-                        method: request.method,
-                        url: resolvedUrl,
-                        requestHeaders: JSON.stringify(resolvedHeaders),
+                        method: resolvedRequest.method,
+                        url: resolvedRequest.url,
+                        requestHeaders: JSON.stringify(resolvedRequest.headers),
                         requestBody: requestBody ?? null,
                         status: result.status,
                         statusText: result.statusText,
@@ -214,6 +237,7 @@ export function RequestEditor({ params, api }: Props) {
     if (!request) {
         return <div className="request-editor-empty">No request loaded</div>;
     }
+    const auth = createRequestAuth(request.auth);
 
     return (
         <div
@@ -256,10 +280,30 @@ export function RequestEditor({ params, api }: Props) {
                     value={request.url}
                     placeholder="Enter URL or paste cURL..."
                     onChange={(e) => updateReq({ url: e.target.value })}
+                    onPaste={(event) => {
+                        const text = event.clipboardData.getData("text");
+                        if (!CURL_PREFIX_PATTERN.test(text)) {
+                            return;
+                        }
+
+                        event.preventDefault();
+                        if (!importCurl(text)) {
+                            setCurlDraft(text);
+                            setCurlModalOpen(true);
+                        }
+                    }}
                     onKeyDown={(e) => {
                         if (e.key === "Enter") handleSend();
                     }}
                 />
+                <button
+                    className="import-curl-btn"
+                    type="button"
+                    title="Import cURL"
+                    onClick={() => openCurlModal()}
+                >
+                    <Import size={14} />
+                </button>
                 <button className="send-btn" onClick={handleSend} disabled={loading}>
                     <Send size={14} />
                     Send
@@ -292,6 +336,13 @@ export function RequestEditor({ params, api }: Props) {
                         )}
                     </button>
                     <button
+                        className={activeTab === "auth" ? "active" : ""}
+                        onClick={() => setActiveTab("auth")}
+                    >
+                        Auth
+                        {auth.type !== "none" && <span className="badge">1</span>}
+                    </button>
+                    <button
                         className={activeTab === "body" ? "active" : ""}
                         onClick={() => setActiveTab("body")}
                     >
@@ -308,6 +359,107 @@ export function RequestEditor({ params, api }: Props) {
                             onChange={updateHeaders}
                             showHeaderSuggestions
                         />
+                    )}
+                    {activeTab === "auth" && (
+                        <div className="auth-editor">
+                            <div className="auth-row">
+                                <label htmlFor={`auth-type-${tabId}`}>Type</label>
+                                <select
+                                    id={`auth-type-${tabId}`}
+                                    aria-label="Auth type"
+                                    value={auth.type}
+                                    onChange={(event) =>
+                                        updateAuth({ type: event.target.value as RequestAuth["type"] })
+                                    }
+                                >
+                                    <option value="none">No Auth</option>
+                                    <option value="bearer">Bearer Token</option>
+                                    <option value="basic">Basic Auth</option>
+                                    <option value="apiKey">API Key</option>
+                                </select>
+                            </div>
+                            {auth.type === "bearer" && (
+                                <div className="auth-grid">
+                                    <label htmlFor={`auth-bearer-${tabId}`}>Token</label>
+                                    <input
+                                        id={`auth-bearer-${tabId}`}
+                                        aria-label="Bearer token"
+                                        value={auth.bearerToken}
+                                        placeholder="{{api_token}}"
+                                        onChange={(event) =>
+                                            updateAuth({ bearerToken: event.target.value })
+                                        }
+                                    />
+                                </div>
+                            )}
+                            {auth.type === "basic" && (
+                                <div className="auth-grid">
+                                    <label htmlFor={`auth-basic-username-${tabId}`}>Username</label>
+                                    <input
+                                        id={`auth-basic-username-${tabId}`}
+                                        aria-label="Basic username"
+                                        value={auth.basicUsername}
+                                        placeholder="{{username}}"
+                                        onChange={(event) =>
+                                            updateAuth({ basicUsername: event.target.value })
+                                        }
+                                    />
+                                    <label htmlFor={`auth-basic-password-${tabId}`}>Password</label>
+                                    <input
+                                        id={`auth-basic-password-${tabId}`}
+                                        aria-label="Basic password"
+                                        type="password"
+                                        value={auth.basicPassword}
+                                        placeholder="{{password}}"
+                                        onChange={(event) =>
+                                            updateAuth({ basicPassword: event.target.value })
+                                        }
+                                    />
+                                </div>
+                            )}
+                            {auth.type === "apiKey" && (
+                                <div className="auth-grid">
+                                    <label htmlFor={`auth-apikey-name-${tabId}`}>Key</label>
+                                    <input
+                                        id={`auth-apikey-name-${tabId}`}
+                                        aria-label="API key name"
+                                        value={auth.apiKeyName}
+                                        placeholder="X-API-Key"
+                                        onChange={(event) =>
+                                            updateAuth({ apiKeyName: event.target.value })
+                                        }
+                                    />
+                                    <label htmlFor={`auth-apikey-value-${tabId}`}>Value</label>
+                                    <input
+                                        id={`auth-apikey-value-${tabId}`}
+                                        aria-label="API key value"
+                                        type="password"
+                                        value={auth.apiKeyValue}
+                                        placeholder="{{api_key}}"
+                                        onChange={(event) =>
+                                            updateAuth({ apiKeyValue: event.target.value })
+                                        }
+                                    />
+                                    <label htmlFor={`auth-apikey-placement-${tabId}`}>Add to</label>
+                                    <select
+                                        id={`auth-apikey-placement-${tabId}`}
+                                        aria-label="API key placement"
+                                        value={auth.apiKeyPlacement}
+                                        onChange={(event) =>
+                                            updateAuth({
+                                                apiKeyPlacement: event.target.value as RequestAuth["apiKeyPlacement"],
+                                            })
+                                        }
+                                    >
+                                        <option value="header">Header</option>
+                                        <option value="query">Query Param</option>
+                                    </select>
+                                </div>
+                            )}
+                            {auth.type === "none" && (
+                                <div className="auth-none">This request does not use authentication</div>
+                            )}
+                        </div>
                     )}
                     {activeTab === "body" && (
                         <div className="body-editor">
@@ -376,6 +528,95 @@ export function RequestEditor({ params, api }: Props) {
             <div className="response-section" style={{ flex: 1 }}>
                 <ResponseViewer response={response} loading={loading} />
             </div>
+            {curlModalOpen && (
+                <CurlImportModal
+                    value={curlDraft}
+                    error={curlError}
+                    onValueChange={(value) => {
+                        setCurlDraft(value);
+                        if (curlError) {
+                            setCurlError("");
+                        }
+                    }}
+                    onCancel={() => {
+                        setCurlModalOpen(false);
+                        setCurlDraft("");
+                        setCurlError("");
+                    }}
+                    onConfirm={() => importCurl(curlDraft)}
+                />
+            )}
+        </div>
+    );
+}
+
+function CurlImportModal({
+    value,
+    error,
+    onValueChange,
+    onCancel,
+    onConfirm,
+}: {
+    value: string;
+    error: string;
+    onValueChange: (value: string) => void;
+    onCancel: () => void;
+    onConfirm: () => void;
+}) {
+    useEffect(() => {
+        const handleKeyDown = (event: KeyboardEvent) => {
+            if (event.key === "Escape") {
+                onCancel();
+            }
+        };
+
+        window.addEventListener("keydown", handleKeyDown);
+        return () => window.removeEventListener("keydown", handleKeyDown);
+    }, [onCancel]);
+
+    return (
+        <div className="curl-modal-overlay" onClick={onCancel}>
+            <form
+                className="curl-modal"
+                role="dialog"
+                aria-modal="true"
+                aria-label="Import cURL"
+                onClick={(event) => event.stopPropagation()}
+                onSubmit={(event) => {
+                    event.preventDefault();
+                    onConfirm();
+                }}
+            >
+                <div className="curl-modal-header">
+                    <span className="curl-modal-title">Import cURL</span>
+                    <button
+                        className="curl-modal-close"
+                        type="button"
+                        aria-label="Close cURL import"
+                        onClick={onCancel}
+                    >
+                        <X size={16} />
+                    </button>
+                </div>
+                <div className="curl-modal-body">
+                    <textarea
+                        aria-label="cURL command"
+                        value={value}
+                        autoFocus
+                        spellCheck={false}
+                        onChange={(event) => onValueChange(event.target.value)}
+                    />
+                    {error && <div className="curl-modal-error">{error}</div>}
+                </div>
+                <div className="curl-modal-footer">
+                    <button type="button" className="curl-modal-secondary" onClick={onCancel}>
+                        Cancel
+                    </button>
+                    <button type="submit" className="curl-modal-primary">
+                        Import
+                    </button>
+                </div>
+            </form>
         </div>
     );
 }

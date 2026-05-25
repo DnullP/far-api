@@ -100,6 +100,23 @@
     opacity: 0.6;
     cursor: not-allowed;
 }
+.import-curl-btn {
+    width: 30px;
+    height: 30px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    background: var(--bg-secondary);
+    border: 1px solid var(--chrome-border-soft);
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 0;
+}
+.import-curl-btn:hover {
+    color: var(--text-primary);
+    border-color: var(--accent-primary);
+}
 
 /* Request Tabs */
 .req-section {
@@ -194,6 +211,49 @@
     font-size: 13px;
 }
 
+/* Auth Editor */
+.auth-editor {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 12px;
+    color: var(--text-primary);
+}
+.auth-row,
+.auth-grid {
+    display: grid;
+    grid-template-columns: 120px minmax(0, 1fr);
+    gap: 8px 12px;
+    align-items: center;
+    max-width: 720px;
+}
+.auth-row label,
+.auth-grid label {
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+.auth-row select,
+.auth-grid select,
+.auth-grid input {
+    min-width: 0;
+    background: var(--bg-secondary);
+    border: 1px solid var(--chrome-border-soft);
+    color: var(--text-primary);
+    padding: 6px 8px;
+    font-family: inherit;
+    font-size: 13px;
+}
+.auth-row select:focus,
+.auth-grid select:focus,
+.auth-grid input:focus {
+    outline: none;
+    border-color: var(--accent-primary);
+}
+.auth-none {
+    color: var(--text-secondary);
+    font-size: 13px;
+}
+
 /* Resize Handle */
 .resize-handle {
     flex-shrink: 0;
@@ -214,6 +274,104 @@
 .resize-handle:hover,
 .resize-handle:active {
     background: var(--accent-primary);
+}
+
+/* cURL Import Modal */
+.curl-modal-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 3000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.38);
+}
+.curl-modal {
+    width: min(720px, calc(100vw - 32px));
+    max-height: calc(100vh - 32px);
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-primary);
+    border: 1px solid var(--chrome-border-strong);
+    box-shadow: var(--chrome-shadow-strong);
+}
+.curl-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 38px;
+    padding: 0 12px;
+    border-bottom: 1px solid var(--chrome-border-soft);
+}
+.curl-modal-title {
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 600;
+}
+.curl-modal-close {
+    width: 28px;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+.curl-modal-close:hover {
+    color: var(--text-primary);
+    background: var(--bg-hover);
+}
+.curl-modal-body {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px;
+    min-height: 0;
+}
+.curl-modal-body textarea {
+    width: 100%;
+    min-height: 180px;
+    max-height: min(420px, 52vh);
+    resize: vertical;
+    background: var(--bg-secondary);
+    border: 1px solid var(--chrome-border-soft);
+    color: var(--text-primary);
+    padding: 10px;
+    font-family: "SF Mono", "Fira Code", monospace;
+    font-size: 12px;
+    line-height: 1.5;
+}
+.curl-modal-body textarea:focus {
+    outline: none;
+    border-color: var(--accent-primary);
+}
+.curl-modal-error {
+    color: #ef4444;
+    font-size: 12px;
+}
+.curl-modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 10px 12px;
+    border-top: 1px solid var(--chrome-border-soft);
+}
+.curl-modal-primary,
+.curl-modal-secondary {
+    border: none;
+    padding: 6px 12px;
+    cursor: pointer;
+    font-size: 12px;
+}
+.curl-modal-primary {
+    background: var(--accent-primary);
+    color: var(--accent-primary-foreground);
+}
+.curl-modal-secondary {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
 }
 
 /* Response Section */

@@ -27,6 +27,15 @@ interface MockRequest {
     params: unknown[];
     headers: unknown[];
     body: { type: string; json: string; form: unknown[]; raw: string };
+    auth: {
+        type: string;
+        bearerToken: string;
+        basicUsername: string;
+        basicPassword: string;
+        apiKeyName: string;
+        apiKeyValue: string;
+        apiKeyPlacement: string;
+    };
     sortOrder: number;
 }
 
@@ -60,6 +69,12 @@ const mockStore = {
     _counter: 0,
 };
 
+const DEFAULT_ENV_ID = "mock-env-dev";
+const DEFAULT_COLLECTION_ID = "mock-col-default";
+const DEFAULT_REQUEST_ID = "mock-req-example";
+
+seedMockStore();
+
 function mockId(): string {
     mockStore._counter++;
     return `mock-${Date.now()}-${mockStore._counter}`;
@@ -76,6 +91,28 @@ interface HttpRequestInput {
 
 async function mockHttpRequest(input: HttpRequestInput) {
     const start = performance.now();
+    const url = new URL(input.url);
+    if (url.hostname === "mock.local") {
+        const elapsed = Math.round(performance.now() - start);
+        const responseBody = JSON.stringify({
+            method: input.method,
+            url: input.url,
+            path: url.pathname,
+            query: Object.fromEntries(url.searchParams.entries()),
+            headers: input.headers,
+            body: input.body,
+        });
+
+        return {
+            status: 200,
+            status_text: "OK",
+            headers: { "content-type": "application/json" },
+            body: responseBody,
+            time: elapsed,
+            size: new TextEncoder().encode(responseBody).length,
+        };
+    }
+
     const proxyUrl = `/api-proxy?url=${encodeURIComponent(input.url)}`;
 
     const res = await fetch(proxyUrl, {
@@ -122,6 +159,18 @@ async function mockInvoke(cmd: string, args?: Record<string, unknown>): Promise<
             if (c) c.name = args?.name as string;
             return undefined;
         }
+        case "reorder_collections": {
+            const ids = args?.collectionIds as string[];
+            const orderById = new Map(ids.map((id, index) => [id, index]));
+            mockStore.collections.sort((left, right) =>
+                (orderById.get(left.id) ?? Number.MAX_SAFE_INTEGER) -
+                (orderById.get(right.id) ?? Number.MAX_SAFE_INTEGER),
+            );
+            mockStore.collections.forEach((collection, index) => {
+                collection.sortOrder = index;
+            });
+            return undefined;
+        }
 
         // ---- Requests ----
         case "create_request": {
@@ -134,6 +183,7 @@ async function mockInvoke(cmd: string, args?: Record<string, unknown>): Promise<
                 params: [],
                 headers: [],
                 body: { type: "none", json: "{}", form: [], raw: "" },
+                auth: defaultMockAuth(),
                 sortOrder: 0,
             };
             const parent = mockStore.collections.find((c) => c.id === req.collectionId);
@@ -154,6 +204,38 @@ async function mockInvoke(cmd: string, args?: Record<string, unknown>): Promise<
                 c.items = c.items.filter((i) => i.id !== args?.id);
             }
             return undefined;
+        case "move_request": {
+            const input = args?.input as {
+                requestId: string;
+                targetCollectionId: string;
+                beforeRequestId?: string | null;
+            };
+            let moving: MockRequest | null = null;
+            for (const collection of mockStore.collections) {
+                const index = collection.items.findIndex((item) => item.id === input.requestId);
+                if (index >= 0) {
+                    moving = collection.items.splice(index, 1)[0] ?? null;
+                    break;
+                }
+            }
+            const target = mockStore.collections.find((collection) => collection.id === input.targetCollectionId);
+            if (!moving || !target) {
+                return undefined;
+            }
+            moving.collectionId = target.id;
+            const insertAt = input.beforeRequestId
+                ? target.items.findIndex((item) => item.id === input.beforeRequestId)
+                : -1;
+            if (insertAt >= 0) {
+                target.items.splice(insertAt, 0, moving);
+            } else {
+                target.items.push(moving);
+            }
+            target.items.forEach((item, index) => {
+                item.sortOrder = index;
+            });
+            return undefined;
+        }
 
         // ---- Environments ----
         case "list_environments":
@@ -216,14 +298,30 @@ async function mockInvoke(cmd: string, args?: Record<string, unknown>): Promise<
             return undefined;
 
         case "frontend_log": {
-            const entry = args?.entry as { level: string; module: string; message: string; data?: string } | undefined;
+            const entry = args?.entry as {
+                level: string;
+                module: string;
+                message: string;
+                data?: string;
+                traceId?: string;
+                command?: string;
+                href?: string;
+                ts?: number;
+            } | undefined;
             if (entry) {
                 const tag = `[mock:${entry.module}]`;
+                const details = [
+                    entry.traceId ? `trace=${entry.traceId}` : "",
+                    entry.command ? `command=${entry.command}` : "",
+                    entry.data ?? "",
+                    entry.href ? `href=${entry.href}` : "",
+                    entry.ts ? `ts=${entry.ts}` : "",
+                ].filter(Boolean).join(" ");
                 switch (entry.level) {
-                    case "error": console.error(tag, entry.message, entry.data ?? ""); break;
-                    case "warn":  console.warn(tag, entry.message, entry.data ?? ""); break;
-                    case "debug": console.debug(tag, entry.message, entry.data ?? ""); break;
-                    default:      console.info(tag, entry.message, entry.data ?? "");
+                    case "error": console.error(tag, entry.message, details); break;
+                    case "warn":  console.warn(tag, entry.message, details); break;
+                    case "debug": console.debug(tag, entry.message, details); break;
+                    default:      console.info(tag, entry.message, details);
                 }
             }
             return undefined;
@@ -249,4 +347,62 @@ async function mockInvoke(cmd: string, args?: Record<string, unknown>): Promise<
 
 export function MockApp(): ReactNode {
     return <App />;
+}
+
+function defaultMockAuth(): MockRequest["auth"] {
+    return {
+        type: "none",
+        bearerToken: "",
+        basicUsername: "",
+        basicPassword: "",
+        apiKeyName: "",
+        apiKeyValue: "",
+        apiKeyPlacement: "header",
+    };
+}
+
+function seedMockStore(): void {
+    if (mockStore.collections.length > 0) {
+        return;
+    }
+
+    const request: MockRequest = {
+        id: DEFAULT_REQUEST_ID,
+        collectionId: DEFAULT_COLLECTION_ID,
+        name: "Example Request",
+        method: "POST",
+        url: "{{base_url}}/anything",
+        params: [
+            { id: "mock-param-1", key: "from", value: "{{workspace}}", enabled: true },
+        ],
+        headers: [
+            { id: "mock-header-1", key: "X-Trace", value: "{{trace_value}}", enabled: true },
+        ],
+        body: {
+            type: "json",
+            json: "{\"env\":\"{{workspace}}\"}",
+            form: [],
+            raw: "",
+        },
+        auth: defaultMockAuth(),
+        sortOrder: 0,
+    };
+
+    mockStore.collections.push({
+        id: DEFAULT_COLLECTION_ID,
+        name: "My Collection",
+        sortOrder: 0,
+        items: [request],
+    });
+    mockStore.environments.push({
+        id: DEFAULT_ENV_ID,
+        name: "Development",
+        variables: [
+            { id: "mock-var-base", key: "base_url", value: "https://mock.local", enabled: true },
+            { id: "mock-var-workspace", key: "workspace", value: "dev", enabled: true },
+            { id: "mock-var-token", key: "api_token", value: "secret-token", enabled: true },
+            { id: "mock-var-trace", key: "trace_value", value: "trace-dev", enabled: true },
+        ],
+    });
+    mockStore.config.set("activeEnvironmentId", DEFAULT_ENV_ID);
 }

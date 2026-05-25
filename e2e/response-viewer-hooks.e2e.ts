@@ -144,4 +144,57 @@ test.describe("ResponseViewer hook order regression", () => {
     );
     expect(hookErrors).toEqual([]);
   });
+
+  test("resolves environment variables and auth helpers before sending", async ({ page }) => {
+    const consoleErrors: string[] = [];
+    const infos: string[] = [];
+    page.on("console", (msg) => {
+      if (msg.type() === "error") {
+        consoleErrors.push(msg.text());
+      }
+      if (msg.type() === "info") {
+        infos.push(msg.text());
+      }
+    });
+    page.on("pageerror", (err) => {
+      consoleErrors.push(err.message);
+    });
+
+    await page.goto(MOCK_PAGE);
+    await page.waitForSelector(".welcome-tab", { timeout: 10_000 });
+
+    await page.locator("button.request-item", { hasText: "Example Request" }).click();
+    await expect(page.locator(".request-editor")).toBeVisible();
+
+    await page.locator("input.url-input").fill("{{base_url}}/anything");
+    await page.getByRole("button", { name: "Headers" }).click();
+    const headerRows = page.locator(".kv-row");
+    await headerRows.first().locator(".kv-key").fill("X-Trace");
+    await headerRows.first().locator(".kv-value").fill("{{trace_value}}");
+
+    await page.getByRole("button", { name: "Auth" }).click();
+    await page.getByLabel("Auth type").selectOption("bearer");
+    await page.getByLabel("Bearer token").fill("{{api_token}}");
+
+    await page.getByRole("button", { name: "Body" }).click();
+    await page.locator(".body-textarea").fill('{"env":"{{workspace}}"}');
+
+    await page.locator("button.send-btn").click();
+
+    await expect(page.locator(".response-status")).toContainText("200 OK", { timeout: 10_000 });
+    const responseText = await page.locator("pre.response-body").textContent();
+    expect(responseText).toContain('"url": "https://mock.local/anything?from=dev"');
+    expect(responseText).toContain('"Authorization": "Bearer secret-token"');
+    expect(responseText).toContain('"X-Trace": "trace-dev"');
+    expect(responseText).toContain('"{\\"env\\":\\"dev\\"}"');
+
+    await expect.poll(() => infos.some((line) =>
+      line.includes("[mock:tauriClient]") &&
+      line.includes("invoke success") &&
+      line.includes("http_request") &&
+      line.includes("trace=far-api:http_request"),
+    )).toBe(true);
+
+    expect(consoleErrors).toEqual([]);
+  });
 });

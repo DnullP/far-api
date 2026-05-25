@@ -2,8 +2,10 @@
  * Frontend service for backend persistence via Tauri invoke.
  * In web-mock mode, these calls hit the mock invoke layer.
  */
-import { invoke } from "@tauri-apps/api/core";
-import type { Collection, ApiRequest, Environment, KeyValuePair, RequestBody } from "../types/api";
+import { FAR_API_COMMANDS } from "../api/commandIds";
+import { invokeCommand } from "../api/tauriClient";
+import { createRequestAuth } from "../types/api";
+import type { Collection, ApiRequest, Environment, KeyValuePair, RequestAuth, RequestBody } from "../types/api";
 
 /* ---------- Backend DTOs ---------- */
 
@@ -30,6 +32,7 @@ interface BackendApiRequest {
     params: BackendKeyValuePair[];
     headers: BackendKeyValuePair[];
     body: BackendRequestBody;
+    auth?: RequestAuth;
     sortOrder: number;
 }
 
@@ -85,6 +88,7 @@ function toFrontendRequest(r: BackendApiRequest): ApiRequest {
             form: r.body.form as KeyValuePair[],
             raw: r.body.raw,
         },
+        auth: createRequestAuth(r.auth),
     };
 }
 
@@ -107,32 +111,36 @@ function toFrontendEnvironment(e: BackendEnvironment): Environment {
 /* ---------- Collections ---------- */
 
 export async function fetchCollections(): Promise<Collection[]> {
-    const data = await invoke<BackendCollection[]>("list_collections");
+    const data = await invokeCommand<BackendCollection[]>(FAR_API_COMMANDS.listCollections);
     return data.map(toFrontendCollection);
 }
 
 export async function createCollectionApi(name: string): Promise<Collection> {
-    const data = await invoke<BackendCollection>("create_collection", { name });
+    const data = await invokeCommand<BackendCollection>(FAR_API_COMMANDS.createCollection, { name });
     return toFrontendCollection(data);
 }
 
 export async function deleteCollectionApi(id: string): Promise<void> {
-    await invoke("delete_collection", { id });
+    await invokeCommand<void>(FAR_API_COMMANDS.deleteCollection, { id });
 }
 
 export async function renameCollectionApi(id: string, name: string): Promise<void> {
-    await invoke("rename_collection", { id, name });
+    await invokeCommand<void>(FAR_API_COMMANDS.renameCollection, { id, name });
+}
+
+export async function reorderCollectionsApi(collectionIds: string[]): Promise<void> {
+    await invokeCommand<void>(FAR_API_COMMANDS.reorderCollections, { collectionIds });
 }
 
 /* ---------- Requests ---------- */
 
 export async function createRequestApi(collectionId: string, name: string): Promise<ApiRequest> {
-    const data = await invoke<BackendApiRequest>("create_request", { collectionId, name });
+    const data = await invokeCommand<BackendApiRequest>(FAR_API_COMMANDS.createRequest, { collectionId, name });
     return toFrontendRequest(data);
 }
 
 export async function updateRequestApi(request: ApiRequest, collectionId: string): Promise<void> {
-    await invoke("update_request", {
+    await invokeCommand<void>(FAR_API_COMMANDS.updateRequest, {
         request: {
             id: request.id,
             collectionId,
@@ -147,47 +155,62 @@ export async function updateRequestApi(request: ApiRequest, collectionId: string
                 form: request.body.form,
                 raw: request.body.raw,
             },
+            auth: createRequestAuth(request.auth),
             sortOrder: 0,
         },
     });
 }
 
 export async function deleteRequestApi(id: string): Promise<void> {
-    await invoke("delete_request", { id });
+    await invokeCommand<void>(FAR_API_COMMANDS.deleteRequest, { id });
+}
+
+export async function moveRequestApi(input: {
+    requestId: string;
+    targetCollectionId: string;
+    beforeRequestId?: string | null;
+}): Promise<void> {
+    await invokeCommand<void>(FAR_API_COMMANDS.moveRequest, {
+        input: {
+            requestId: input.requestId,
+            targetCollectionId: input.targetCollectionId,
+            beforeRequestId: input.beforeRequestId ?? null,
+        },
+    });
 }
 
 /* ---------- Environments ---------- */
 
 export async function fetchEnvironments(): Promise<Environment[]> {
-    const data = await invoke<BackendEnvironment[]>("list_environments");
+    const data = await invokeCommand<BackendEnvironment[]>(FAR_API_COMMANDS.listEnvironments);
     return data.map(toFrontendEnvironment);
 }
 
 export async function createEnvironmentApi(name: string): Promise<Environment> {
-    const data = await invoke<BackendEnvironment>("create_environment", { name });
+    const data = await invokeCommand<BackendEnvironment>(FAR_API_COMMANDS.createEnvironment, { name });
     return toFrontendEnvironment(data);
 }
 
 export async function updateEnvironmentApi(env: Environment): Promise<void> {
-    await invoke("update_environment", { env });
+    await invokeCommand<void>(FAR_API_COMMANDS.updateEnvironment, { env });
 }
 
 export async function deleteEnvironmentApi(id: string): Promise<void> {
-    await invoke("delete_environment", { id });
+    await invokeCommand<void>(FAR_API_COMMANDS.deleteEnvironment, { id });
 }
 
 /* ---------- Config ---------- */
 
 export async function getConfig(key: string): Promise<string | null> {
-    return invoke<string | null>("get_config", { key });
+    return invokeCommand<string | null>(FAR_API_COMMANDS.getConfig, { key });
 }
 
 export async function setConfig(key: string, value: string): Promise<void> {
-    await invoke("set_config", { key, value });
+    await invokeCommand<void>(FAR_API_COMMANDS.setConfig, { key, value });
 }
 
 export async function getAllConfig(): Promise<Array<[string, string]>> {
-    return invoke("get_all_config");
+    return invokeCommand<Array<[string, string]>>(FAR_API_COMMANDS.getAllConfig);
 }
 
 /* ---------- History ---------- */
@@ -205,7 +228,7 @@ export async function addHistory(entry: {
     timeMs: number;
     sizeBytes: number;
 }): Promise<string> {
-    return invoke<string>("add_history", {
+    return invokeCommand<string>(FAR_API_COMMANDS.addHistory, {
         entry: {
             requestId: entry.requestId ?? null,
             method: entry.method,
@@ -223,7 +246,7 @@ export async function addHistory(entry: {
 }
 
 export async function listHistory(limit?: number, offset?: number): Promise<HistoryEntry[]> {
-    return invoke<HistoryEntry[]>("list_history", {
+    return invokeCommand<HistoryEntry[]>(FAR_API_COMMANDS.listHistory, {
         limit: limit ?? null,
         offset: offset ?? null,
     });
@@ -246,9 +269,9 @@ export async function fetchAllHistory(batchSize = 200): Promise<HistoryEntry[]> 
 }
 
 export async function clearHistory(): Promise<void> {
-    await invoke("clear_history");
+    await invokeCommand<void>(FAR_API_COMMANDS.clearHistory);
 }
 
 export async function deleteHistoryEntry(id: string): Promise<void> {
-    await invoke("delete_history_entry", { id });
+    await invokeCommand<void>(FAR_API_COMMANDS.deleteHistoryEntry, { id });
 }

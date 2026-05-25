@@ -9,8 +9,10 @@ import {
     type Collection,
     type Environment,
     createKeyValuePair,
+    createRequestAuth,
     isFolder,
 } from "../types/api";
+import { createVariableResolver } from "../services/requestResolver";
 import {
     fetchCollections,
     fetchEnvironments,
@@ -57,11 +59,21 @@ type Action =
     | { type: "LOAD_ENVIRONMENTS"; environments: Environment[]; activeEnvironmentId: string | null }
     | { type: "LOAD_HISTORY"; entries: HistoryEntry[] }
     | { type: "ADD_HISTORY_ENTRY"; entry: HistoryEntry }
+    | { type: "DELETE_HISTORY_ENTRY"; entryId: string }
+    | { type: "CLEAR_HISTORY" }
     | { type: "ADD_COLLECTION"; collection: Collection }
     | { type: "ADD_REQUEST_TO_COLLECTION"; collectionId: string; request: ApiRequest }
     | { type: "OPEN_REQUEST"; tabId: string; request: ApiRequest }
     | { type: "UPDATE_COLLECTION"; collectionId: string; collection: Partial<Collection> }
     | { type: "UPDATE_REQUEST_BY_ID"; requestId: string; request: Partial<ApiRequest> }
+    | { type: "REORDER_COLLECTIONS"; collectionIds: string[] }
+    | {
+        type: "MOVE_REQUEST";
+        requestId: string;
+        fromCollectionId: string;
+        toCollectionId: string;
+        beforeRequestId?: string | null;
+    }
     | { type: "SET_RESPONSE"; tabId: string; response: ApiResponse | null }
     | { type: "SET_LOADING"; tabId: string; loading: boolean }
     | { type: "SET_ACTIVE_ENVIRONMENT"; envId: string | null }
@@ -99,6 +111,24 @@ function updateRequestItems(
     });
 
     return changed ? nextItems : items;
+}
+
+function normalizeRequest(request: ApiRequest): ApiRequest {
+    return {
+        ...request,
+        auth: createRequestAuth(request.auth),
+    };
+}
+
+function normalizeCollections(collections: Collection[]): Collection[] {
+    return collections.map((collection) => ({
+        ...collection,
+        items: collection.items.map((item) =>
+            isFolder(item)
+                ? { ...item, children: item.children.map((child) => isFolder(child) ? child : normalizeRequest(child)) }
+                : normalizeRequest(item),
+        ),
+    }));
 }
 
 function removeRequestItems(items: CollectionItem[], requestId: string): CollectionItem[] {
@@ -190,10 +220,104 @@ function updateOpenRequestsById(
     return changed ? nextOpenRequests : openRequests;
 }
 
+function reorderCollectionsById(collections: Collection[], collectionIds: string[]): Collection[] {
+    const collectionById = new Map(collections.map((collection) => [collection.id, collection]));
+    const ordered: Collection[] = [];
+    const seen = new Set<string>();
+
+    for (const id of collectionIds) {
+        const collection = collectionById.get(id);
+        if (collection) {
+            ordered.push(collection);
+            seen.add(id);
+        }
+    }
+
+    for (const collection of collections) {
+        if (!seen.has(collection.id)) {
+            ordered.push(collection);
+        }
+    }
+
+    return ordered;
+}
+
+function insertRequestItem(
+    items: CollectionItem[],
+    request: ApiRequest,
+    beforeRequestId?: string | null,
+): CollectionItem[] {
+    const nextItems = items.filter((item) => isFolder(item) || item.id !== request.id);
+    if (!beforeRequestId) {
+        return [...nextItems, request];
+    }
+
+    const insertAt = nextItems.findIndex((item) => !isFolder(item) && item.id === beforeRequestId);
+    if (insertAt < 0) {
+        return [...nextItems, request];
+    }
+
+    return [
+        ...nextItems.slice(0, insertAt),
+        request,
+        ...nextItems.slice(insertAt),
+    ];
+}
+
+function moveRequest(
+    collections: Collection[],
+    requestId: string,
+    fromCollectionId: string,
+    toCollectionId: string,
+    beforeRequestId?: string | null,
+): Collection[] {
+    const sourceCollection = collections.find((collection) => collection.id === fromCollectionId);
+    const request = sourceCollection ? findRequestItems(sourceCollection.items, requestId) : null;
+    if (!request) {
+        return collections;
+    }
+
+    return collections.map((collection) => {
+        if (collection.id === fromCollectionId && collection.id !== toCollectionId) {
+            return { ...collection, items: removeRequestItems(collection.items, requestId) };
+        }
+
+        if (collection.id === toCollectionId) {
+            const baseItems = collection.id === fromCollectionId
+                ? removeRequestItems(collection.items, requestId)
+                : collection.items;
+            return {
+                ...collection,
+                items: insertRequestItem(baseItems, request, beforeRequestId),
+            };
+        }
+
+        return collection;
+    });
+}
+
+function findRequestItems(items: CollectionItem[], requestId: string): ApiRequest | null {
+    for (const item of items) {
+        if (isFolder(item)) {
+            const nested = findRequestItems(item.children, requestId);
+            if (nested) {
+                return nested;
+            }
+            continue;
+        }
+
+        if (item.id === requestId) {
+            return item;
+        }
+    }
+
+    return null;
+}
+
 function reducer(state: AppState, action: Action): AppState {
     switch (action.type) {
         case "LOAD_COLLECTIONS": {
-            return { ...state, collections: action.collections };
+            return { ...state, collections: normalizeCollections(action.collections) };
         }
         case "LOAD_ENVIRONMENTS": {
             return { ...state, environments: action.environments, activeEnvironmentId: action.activeEnvironmentId };
@@ -203,6 +327,15 @@ function reducer(state: AppState, action: Action): AppState {
         }
         case "ADD_HISTORY_ENTRY": {
             return { ...state, historyEntries: [action.entry, ...state.historyEntries] };
+        }
+        case "DELETE_HISTORY_ENTRY": {
+            return {
+                ...state,
+                historyEntries: state.historyEntries.filter((entry) => entry.id !== action.entryId),
+            };
+        }
+        case "CLEAR_HISTORY": {
+            return { ...state, historyEntries: [] };
         }
         case "ADD_COLLECTION": {
             return { ...state, collections: [...state.collections, action.collection] };
@@ -243,6 +376,24 @@ function reducer(state: AppState, action: Action): AppState {
                     state.openRequests,
                     action.requestId,
                     action.request,
+                ),
+            };
+        }
+        case "REORDER_COLLECTIONS": {
+            return {
+                ...state,
+                collections: reorderCollectionsById(state.collections, action.collectionIds),
+            };
+        }
+        case "MOVE_REQUEST": {
+            return {
+                ...state,
+                collections: moveRequest(
+                    state.collections,
+                    action.requestId,
+                    action.fromCollectionId,
+                    action.toCollectionId,
+                    action.beforeRequestId,
                 ),
             };
         }
@@ -400,15 +551,7 @@ export function useAppDispatch() {
 /* ---------- Variable interpolation ---------- */
 
 export function interpolateVariables(input: string, state: AppState): string {
-    const env = state.environments.find((e) => e.id === state.activeEnvironmentId);
-    if (!env) return input;
-    let result = input;
-    for (const v of env.variables) {
-        if (v.enabled && v.key) {
-            result = result.replaceAll(`{{${v.key}}}`, v.value);
-        }
-    }
-    return result;
+    return createVariableResolver(state)(input);
 }
 
 /* ---------- Helpers ---------- */

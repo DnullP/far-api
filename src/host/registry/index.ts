@@ -1,0 +1,18 @@
+export {
+    getActivityById,
+    getActivitiesSnapshot,
+    getPanelById,
+    getPanelsSnapshot,
+    getTabComponentsSnapshot,
+    registerActivity,
+    registerPanel,
+    registerTabComponent,
+    subscribeWorkbenchRegistry,
+    useActivityDefinitions,
+    usePanelDefinitions,
+    useTabComponentRenderers,
+    type ActivityContribution,
+    type PanelContribution,
+    type TabComponentContribution,
+    type WorkbenchTabRenderer,
+} from "./workbenchRegistry";
