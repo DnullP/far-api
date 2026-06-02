@@ -254,6 +254,98 @@
     font-size: 13px;
 }
 
+/* Script Editor */
+.script-editor {
+    display: flex;
+    flex-direction: column;
+    min-height: 100%;
+    color: var(--text-primary);
+}
+.script-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    min-height: 220px;
+    border-bottom: 1px solid var(--chrome-border-soft);
+}
+.script-panel {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+.script-panel + .script-panel {
+    border-left: 1px solid var(--chrome-border-soft);
+}
+.script-panel > span {
+    padding: 8px 12px;
+    color: var(--text-secondary);
+    border-bottom: 1px solid var(--chrome-border-soft);
+    font-size: 12px;
+}
+.script-panel textarea {
+    flex: 1;
+    min-height: 180px;
+    width: 100%;
+    resize: none;
+    background: transparent;
+    border: none;
+    color: var(--text-primary);
+    padding: 10px 12px;
+    font-family: "SF Mono", "Fira Code", monospace;
+    font-size: 12px;
+    line-height: 1.5;
+}
+.script-panel textarea:focus {
+    outline: none;
+    background: var(--bg-secondary);
+}
+.script-result {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px 12px;
+    font-size: 12px;
+}
+.script-tests,
+.script-console {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.script-test,
+.script-console > div {
+    display: grid;
+    grid-template-columns: 48px minmax(0, 1fr);
+    gap: 8px;
+    align-items: start;
+}
+.script-test span {
+    font-weight: 700;
+}
+.script-test.passed span {
+    color: #22c55e;
+}
+.script-test.failed span {
+    color: #ef4444;
+}
+.script-test strong {
+    font-weight: 500;
+}
+.script-test em {
+    grid-column: 2;
+    color: #ef4444;
+    font-style: normal;
+}
+.script-console span {
+    color: var(--text-secondary);
+}
+.script-console code {
+    color: var(--text-primary);
+    white-space: pre-wrap;
+}
+.script-empty-result {
+    color: var(--text-secondary);
+}
+
 /* Resize Handle */
 .resize-handle {
     flex-shrink: 0;
@@ -378,4 +470,14 @@
 .response-section {
     min-height: 60px;
     overflow: hidden;
+}
+
+@media (max-width: 760px) {
+    .script-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+    .script-panel + .script-panel {
+        border-left: none;
+        border-top: 1px solid var(--chrome-border-soft);
+    }
 }

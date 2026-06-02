@@ -7,6 +7,10 @@ export const FAR_API_COMMANDS = {
     deleteCollection: "delete_collection",
     renameCollection: "rename_collection",
     reorderCollections: "reorder_collections",
+    createFolder: "create_folder",
+    renameFolder: "rename_folder",
+    deleteFolder: "delete_folder",
+    moveFolder: "move_folder",
     createRequest: "create_request",
     updateRequest: "update_request",
     deleteRequest: "delete_request",
@@ -25,6 +29,10 @@ export const FAR_API_COMMANDS = {
     listHistory: "list_history",
     clearHistory: "clear_history",
     deleteHistoryEntry: "delete_history_entry",
+
+    addRunnerReport: "add_runner_report",
+    listRunnerReports: "list_runner_reports",
+    deleteRunnerReport: "delete_runner_report",
 } as const;
 
 export type FarApiCommandId = (typeof FAR_API_COMMANDS)[keyof typeof FAR_API_COMMANDS];

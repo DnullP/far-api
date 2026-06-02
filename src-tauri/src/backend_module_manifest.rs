@@ -1,5 +1,5 @@
 use crate::commands::{COLLECTION_COMMAND_IDS, ENVIRONMENT_COMMAND_IDS, REQUEST_COMMAND_IDS};
-use crate::config_history::{CONFIG_COMMAND_IDS, HISTORY_COMMAND_IDS};
+use crate::config_history::{CONFIG_COMMAND_IDS, HISTORY_COMMAND_IDS, RUNNER_REPORT_COMMAND_IDS};
 use crate::host::commands::frontend_log_commands::FRONTEND_LOG_COMMAND_IDS;
 use crate::host::commands::http_commands::HTTP_COMMAND_IDS;
 use crate::module_contribution::{
@@ -27,7 +27,10 @@ pub fn builtin_backend_module_contributions() -> Vec<BackendModuleContribution> 
         },
         BackendModuleContribution {
             module_id: "request-history",
-            command_ids: HISTORY_COMMAND_IDS.to_vec(),
+            command_ids: concat_command_ids(&[
+                HISTORY_COMMAND_IDS,
+                RUNNER_REPORT_COMMAND_IDS,
+            ]),
         },
     ]
 }

@@ -12,7 +12,7 @@ const OPENAPI_METHOD_KEYS = new Set(HTTP_METHODS.map((method) => method.toLowerC
 const JSON_CONTENT_TYPES = ["application/json", "application/*+json"];
 const FORM_CONTENT_TYPES = ["application/x-www-form-urlencoded", "multipart/form-data"];
 
-export type ApiSpecFormat = "openapi" | "swagger" | "postman";
+export type ApiSpecFormat = "openapi" | "swagger" | "postman" | "hoppscotch";
 
 export interface ImportedRequestDraft {
     name: string;
@@ -24,9 +24,16 @@ export interface ImportedRequestDraft {
     auth: RequestAuth;
 }
 
+export interface ImportedFolderDraft {
+    name: string;
+    requests: ImportedRequestDraft[];
+    folders: ImportedFolderDraft[];
+}
+
 export interface ImportedCollectionDraft {
     name: string;
     requests: ImportedRequestDraft[];
+    folders: ImportedFolderDraft[];
 }
 
 export interface ParsedApiSpecImport {
@@ -42,8 +49,16 @@ export function parseApiSpecImportJson(input: string): ParsedApiSpecImport {
         throw new Error("Import content must be valid JSON.");
     }
 
+    const hoppscotchCollection = parseHoppscotchImport(document);
+    if (hoppscotchCollection) {
+        return {
+            format: "hoppscotch",
+            collection: hoppscotchCollection,
+        };
+    }
+
     if (!isRecord(document)) {
-        throw new Error("Import content must be a JSON object.");
+        throw new Error("Import content must be a JSON object or Hoppscotch collection array.");
     }
 
     if (typeof document.openapi === "string") {
@@ -67,7 +82,7 @@ export function parseApiSpecImportJson(input: string): ParsedApiSpecImport {
         };
     }
 
-    throw new Error("Unsupported import format. Use OpenAPI 3.x, Swagger 2.0, or Postman Collection JSON.");
+    throw new Error("Unsupported import format. Use OpenAPI 3.x, Swagger 2.0, Postman Collection, or Hoppscotch Collection JSON.");
 }
 
 function parseOpenApi3(document: Record<string, unknown>): ImportedCollectionDraft {
@@ -162,24 +177,291 @@ function parseSwagger2(document: Record<string, unknown>): ImportedCollectionDra
 
 function parsePostmanCollection(document: Record<string, unknown>): ImportedCollectionDraft {
     const name = readInfoTitle(document, "Imported Postman Collection");
+    const parsedItems = collectPostmanItems(asArray(document.item), postmanAuth(document.auth));
+    return collectionWithNestedRequests(name, parsedItems.requests, parsedItems.folders);
+}
+
+function parseHoppscotchImport(document: unknown): ImportedCollectionDraft | null {
+    const collections = hoppscotchCollectionsFrom(document);
+    if (!collections) {
+        return null;
+    }
+
+    const collectionDrafts = collections.map((collection) =>
+        parseHoppscotchNode(collection, {
+            auth: hoppscotchAuth(collection.auth),
+            headers: hoppscotchPairs(collection.headers),
+        }),
+    );
+
+    if (collections.length === 1) {
+        const name = readString(collections[0].name) || "Imported Hoppscotch Collection";
+        return collectionWithNestedRequests(name, collectionDrafts[0].requests, collectionDrafts[0].folders);
+    }
+
+    return collectionWithNestedRequests(
+        "Imported Hoppscotch Collections",
+        [],
+        collections.map((collection, index) => ({
+            name: readString(collection.name) || `Collection ${index + 1}`,
+            requests: collectionDrafts[index].requests,
+            folders: collectionDrafts[index].folders,
+        })),
+    );
+}
+
+function hoppscotchCollectionsFrom(document: unknown): Record<string, unknown>[] | null {
+    if (Array.isArray(document)) {
+        const collections = document
+            .map((item) => asRecord(item))
+            .filter((item): item is Record<string, unknown> => isHoppscotchCollection(item));
+        return collections.length > 0 ? collections : null;
+    }
+
+    const root = asRecord(document);
+    if (!root) {
+        return null;
+    }
+
+    if (Array.isArray(root.requests) || Array.isArray(root.folders) || Array.isArray(root.children)) {
+        return [root];
+    }
+
+    const directCollections = asArray(root.collections)
+        .map((item) => asRecord(item))
+        .filter((item): item is Record<string, unknown> => isHoppscotchCollection(item));
+    if (directCollections.length > 0) {
+        return directCollections;
+    }
+
+    const data = asRecord(root.data);
+    const dataCollections = asArray(data?.collections)
+        .map((item) => asRecord(item))
+        .filter((item): item is Record<string, unknown> => isHoppscotchCollection(item));
+    return dataCollections.length > 0 ? dataCollections : null;
+}
+
+function isHoppscotchCollection(value: Record<string, unknown> | null): value is Record<string, unknown> {
+    return value !== null &&
+        (Array.isArray(value.requests) || Array.isArray(value.folders) || Array.isArray(value.children)) &&
+        !Array.isArray(value.item);
+}
+
+interface HoppscotchInheritedState {
+    auth: RequestAuth;
+    headers: KeyValuePair[];
+}
+
+function parseHoppscotchNode(
+    node: Record<string, unknown>,
+    inherited: HoppscotchInheritedState,
+): { requests: ImportedRequestDraft[]; folders: ImportedFolderDraft[] } {
+    const nodeAuth = "auth" in node ? hoppscotchAuth(node.auth, inherited.auth) : inherited.auth;
+    const nodeHeaders = mergeKeyValuePairs(inherited.headers, hoppscotchPairs(node.headers));
     const requests: ImportedRequestDraft[] = [];
-    collectPostmanItems(asArray(document.item), requests, postmanAuth(document.auth));
-    return collectionWithRequests(name, requests);
+    const folders: ImportedFolderDraft[] = [];
+
+    for (const requestUnknown of asArray(node.requests)) {
+        const request = asRecord(requestUnknown);
+        if (!isHoppscotchRequest(request)) {
+            continue;
+        }
+
+        requests.push(hoppscotchRequestDraft(request, nodeAuth, nodeHeaders));
+    }
+
+    for (const [index, folderUnknown] of [...asArray(node.folders), ...asArray(node.children)].entries()) {
+        const folder = asRecord(folderUnknown);
+        if (!folder || !isHoppscotchCollection(folder)) {
+            continue;
+        }
+        const folderDraft = parseHoppscotchNode(folder, {
+            auth: nodeAuth,
+            headers: nodeHeaders,
+        });
+        folders.push({
+            name: readString(folder.name) || `Folder ${index + 1}`,
+            requests: folderDraft.requests,
+            folders: folderDraft.folders,
+        });
+    }
+
+    return { requests, folders };
+}
+
+function isHoppscotchRequest(value: Record<string, unknown> | null): value is Record<string, unknown> {
+    return value !== null &&
+        (readString(value.endpoint) || readString(value.url) || readString(value.method)) !== "";
+}
+
+function hoppscotchRequestDraft(
+    request: Record<string, unknown>,
+    inheritedAuth: RequestAuth,
+    inheritedHeaders: KeyValuePair[],
+): ImportedRequestDraft {
+    const method = normalizeMethod(readString(request.method) || "GET");
+    const endpoint = readString(request.endpoint) || readString(request.url);
+    const split = splitUrlParams(endpoint);
+    const explicitParams = hoppscotchPairs(request.params);
+    const requestHeaders = hoppscotchPairs(request.headers);
+    const mergedHeaders = mergeKeyValuePairs(inheritedHeaders, requestHeaders);
+    const body = hoppscotchBody(request.body, mergedHeaders);
+    const headers = withContentType(mergedHeaders, body.contentType);
+
+    return {
+        name: readString(request.name) || `${method} ${split.url}`,
+        method,
+        url: split.url,
+        params: withEmptyPairFallback(explicitParams.length > 0 ? explicitParams : split.params),
+        headers: withEmptyPairFallback(headers),
+        body: body.body,
+        auth: "auth" in request ? hoppscotchAuth(request.auth, inheritedAuth) : inheritedAuth,
+    };
+}
+
+function hoppscotchBody(
+    bodyUnknown: unknown,
+    headers: KeyValuePair[],
+): { body: RequestBody; contentType?: string } {
+    if (typeof bodyUnknown === "string") {
+        return {
+            body: requestBodyFromRawContent(headerContentType(headers), bodyUnknown),
+            contentType: headerContentType(headers),
+        };
+    }
+
+    const body = asRecord(bodyUnknown);
+    if (!body) {
+        return { body: emptyBody() };
+    }
+
+    const contentType = readString(body.contentType) || headerContentType(headers);
+    const value = body.body ?? body.raw ?? body.content;
+    if (value === undefined || value === null || value === "") {
+        return { body: emptyBody(), contentType: contentType || undefined };
+    }
+
+    if (isFormContentType(contentType)) {
+        const rows = hoppscotchPairs(value);
+        if (rows.length > 0) {
+            return {
+                body: {
+                    type: "form",
+                    json: "{}",
+                    form: withEmptyPairFallback(rows),
+                    raw: "",
+                },
+                contentType,
+            };
+        }
+    }
+
+    if (typeof value === "string") {
+        return {
+            body: requestBodyFromRawContent(contentType, value),
+            contentType: contentType || undefined,
+        };
+    }
+
+    if (isRecord(value) || Array.isArray(value)) {
+        return {
+            body: bodyFromSample(contentType || "application/json", value),
+            contentType: contentType || undefined,
+        };
+    }
+
+    return {
+        body: requestBodyFromRawContent(contentType, sampleScalar(value)),
+        contentType: contentType || undefined,
+    };
+}
+
+function requestBodyFromRawContent(contentType: string, value: string): RequestBody {
+    if (isJsonContentType(contentType) || looksLikeJson(value)) {
+        return {
+            type: "json",
+            json: value || "{}",
+            form: [createKeyValuePair()],
+            raw: "",
+        };
+    }
+
+    return {
+        type: "raw",
+        json: "{}",
+        form: [createKeyValuePair()],
+        raw: value,
+    };
+}
+
+function hoppscotchAuth(authUnknown: unknown, inheritedAuth: RequestAuth = createRequestAuth()): RequestAuth {
+    const auth = asRecord(authUnknown);
+    if (!auth) {
+        return inheritedAuth;
+    }
+
+    const active = auth.authActive !== false && auth.active !== false && auth.enabled !== false;
+    if (!active) {
+        return createRequestAuth();
+    }
+
+    const type = (readString(auth.authType) || readString(auth.type)).toLowerCase();
+    if (!type || type === "inherit" || type === "inherited") {
+        return inheritedAuth;
+    }
+
+    if (type === "none" || type === "noauth" || type === "no-auth") {
+        return createRequestAuth();
+    }
+
+    if (type.includes("bearer")) {
+        return createRequestAuth({
+            type: "bearer",
+            bearerToken: readString(auth.token) || readString(auth.bearerToken) || readString(auth.bearer),
+        });
+    }
+
+    if (type.includes("basic")) {
+        return createRequestAuth({
+            type: "basic",
+            basicUsername: readString(auth.username) || readString(auth.user),
+            basicPassword: readString(auth.password),
+        });
+    }
+
+    if (type.includes("api")) {
+        const placement = readString(auth.addTo) || readString(auth.in) || readString(auth.placement);
+        return createRequestAuth({
+            type: "apiKey",
+            apiKeyName: readString(auth.key) || readString(auth.name),
+            apiKeyValue: readString(auth.value),
+            apiKeyPlacement: placement.toLowerCase().includes("query") ? "query" : "header",
+        });
+    }
+
+    return inheritedAuth;
 }
 
 function collectPostmanItems(
     items: unknown[],
-    requests: ImportedRequestDraft[],
     inheritedAuth: RequestAuth,
-): void {
-    for (const itemUnknown of items) {
+): { requests: ImportedRequestDraft[]; folders: ImportedFolderDraft[] } {
+    const requests: ImportedRequestDraft[] = [];
+    const folders: ImportedFolderDraft[] = [];
+
+    for (const [index, itemUnknown] of items.entries()) {
         const item = asRecord(itemUnknown);
         if (!item) {
             continue;
         }
         const itemAuth = "auth" in item ? postmanAuth(item.auth) : inheritedAuth;
         if (Array.isArray(item.item)) {
-            collectPostmanItems(item.item, requests, itemAuth);
+            const folder = collectPostmanItems(item.item, itemAuth);
+            folders.push({
+                name: readString(item.name) || `Folder ${index + 1}`,
+                requests: folder.requests,
+                folders: folder.folders,
+            });
             continue;
         }
 
@@ -204,14 +486,31 @@ function collectPostmanItems(
             auth,
         });
     }
+
+    return { requests, folders };
 }
 
 function collectionWithRequests(name: string, requests: ImportedRequestDraft[]): ImportedCollectionDraft {
-    if (requests.length === 0) {
+    return collectionWithNestedRequests(name, requests, []);
+}
+
+function collectionWithNestedRequests(
+    name: string,
+    requests: ImportedRequestDraft[],
+    folders: ImportedFolderDraft[],
+): ImportedCollectionDraft {
+    if (requests.length + countImportedFolderRequests(folders) === 0) {
         throw new Error("Import document does not contain any requests.");
     }
 
-    return { name, requests };
+    return { name, requests, folders };
+}
+
+function countImportedFolderRequests(folders: ImportedFolderDraft[]): number {
+    return folders.reduce(
+        (total, folder) => total + folder.requests.length + countImportedFolderRequests(folder.folders),
+        0,
+    );
 }
 
 function openApiRequestBody(
@@ -509,6 +808,46 @@ function postmanAuthValue(valueUnknown: unknown, key: string): string {
         .map((entry) => asRecord(entry))
         .find((entry) => readString(entry?.key) === key);
     return readString(item?.value);
+}
+
+function hoppscotchPairs(valueUnknown: unknown): KeyValuePair[] {
+    if (isRecord(valueUnknown)) {
+        return Object.entries(valueUnknown)
+            .map(([key, value]) => createKeyValuePair(key, sampleScalar(value)))
+            .filter((pair) => pair.key);
+    }
+
+    return asArray(valueUnknown)
+        .map((entry) => asRecord(entry))
+        .filter(isEnabledHoppscotchPair)
+        .map((entry) => createKeyValuePair(readString(entry.key), sampleScalar(entry.value ?? entry.content)))
+        .filter((pair) => pair.key);
+}
+
+function isEnabledHoppscotchPair(value: Record<string, unknown> | null): value is Record<string, unknown> {
+    return value !== null &&
+        value.active !== false &&
+        value.enabled !== false &&
+        value.disabled !== true;
+}
+
+function mergeKeyValuePairs(base: KeyValuePair[], overrides: KeyValuePair[]): KeyValuePair[] {
+    if (base.length === 0) {
+        return overrides;
+    }
+    if (overrides.length === 0) {
+        return base;
+    }
+
+    const overrideKeys = new Set(overrides.map((pair) => pair.key.toLowerCase()));
+    return [
+        ...base.filter((pair) => !overrideKeys.has(pair.key.toLowerCase())),
+        ...overrides,
+    ];
+}
+
+function headerContentType(headers: KeyValuePair[]): string {
+    return headers.find((header) => header.key.toLowerCase() === "content-type")?.value ?? "";
 }
 
 function splitUrlParams(rawUrl: string): { url: string; params: KeyValuePair[] } {

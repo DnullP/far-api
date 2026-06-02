@@ -113,6 +113,18 @@ describe("apiSpecImporter", () => {
                         },
                     },
                 },
+                {
+                    name: "Admin",
+                    item: [
+                        {
+                            name: "Folder Echo",
+                            request: {
+                                method: "GET",
+                                url: "https://mock.local/admin",
+                            },
+                        },
+                    ],
+                },
             ],
         }));
 
@@ -133,6 +145,130 @@ describe("apiSpecImporter", () => {
         expect(parsed.collection.requests[0].auth).toEqual(expect.objectContaining({
             type: "bearer",
             bearerToken: "{{api_token}}",
+        }));
+        expect(parsed.collection.folders[0].name).toBe("Admin");
+        expect(parsed.collection.folders[0].requests[0]).toEqual(expect.objectContaining({
+            name: "Folder Echo",
+            method: "GET",
+            url: "https://mock.local/admin",
+        }));
+    });
+
+    it("parses Hoppscotch Collection JSON into request drafts", () => {
+        const parsed = parseApiSpecImportJson(JSON.stringify({
+            v: 1,
+            name: "Hoppscotch Demo",
+            headers: [{ key: "X-Workspace", value: "far", active: true }],
+            auth: {
+                authType: "bearer",
+                authActive: true,
+                token: "{{hoppscotch_token}}",
+            },
+            requests: [
+                {
+                    v: "1",
+                    name: "List Users",
+                    method: "GET",
+                    endpoint: "https://mock.local/users?page=1",
+                    params: [{ key: "limit", value: "20", active: true }],
+                    headers: [{ key: "X-Trace", value: "abc", active: true }],
+                },
+            ],
+            folders: [
+                {
+                    name: "Admin",
+                    requests: [
+                        {
+                            v: "1",
+                            name: "Create User",
+                            method: "POST",
+                            endpoint: "https://mock.local/users",
+                            headers: [{ key: "Content-Type", value: "application/json", active: true }],
+                            body: {
+                                contentType: "application/json",
+                                body: "{\"name\":\"Kai\"}",
+                            },
+                            auth: {
+                                authType: "basic",
+                                authActive: true,
+                                username: "kai",
+                                password: "secret",
+                            },
+                        },
+                    ],
+                },
+            ],
+        }));
+
+        expect(parsed.format).toBe("hoppscotch");
+        expect(parsed.collection.name).toBe("Hoppscotch Demo");
+        expect(parsed.collection.requests).toHaveLength(1);
+        expect(parsed.collection.folders).toHaveLength(1);
+        expect(parsed.collection.folders[0].name).toBe("Admin");
+        expect(parsed.collection.requests[0]).toEqual(expect.objectContaining({
+            name: "List Users",
+            method: "GET",
+            url: "https://mock.local/users",
+        }));
+        expect(parsed.collection.requests[0].params).toEqual([
+            expect.objectContaining({ key: "limit", value: "20" }),
+        ]);
+        expect(parsed.collection.requests[0].headers).toEqual([
+            expect.objectContaining({ key: "X-Workspace", value: "far" }),
+            expect.objectContaining({ key: "X-Trace", value: "abc" }),
+        ]);
+        expect(parsed.collection.requests[0].auth).toEqual(expect.objectContaining({
+            type: "bearer",
+            bearerToken: "{{hoppscotch_token}}",
+        }));
+        expect(parsed.collection.folders[0].requests[0]).toEqual(expect.objectContaining({
+            name: "Create User",
+            method: "POST",
+            url: "https://mock.local/users",
+        }));
+        expect(parsed.collection.folders[0].requests[0].body).toEqual(expect.objectContaining({
+            type: "json",
+            json: "{\"name\":\"Kai\"}",
+        }));
+        expect(parsed.collection.folders[0].requests[0].auth).toEqual(expect.objectContaining({
+            type: "basic",
+            basicUsername: "kai",
+            basicPassword: "secret",
+        }));
+    });
+
+    it("parses Hoppscotch exported collection arrays", () => {
+        const parsed = parseApiSpecImportJson(JSON.stringify([
+            {
+                name: "First Collection",
+                requests: [{
+                    name: "Ping",
+                    method: "GET",
+                    endpoint: "https://mock.local/ping",
+                }],
+            },
+            {
+                name: "Second Collection",
+                folders: [{
+                    name: "Nested",
+                    requests: [{
+                        name: "Pong",
+                        method: "POST",
+                        endpoint: "https://mock.local/pong",
+                        body: "{\"pong\":true}",
+                    }],
+                }],
+            },
+        ]));
+
+        expect(parsed.format).toBe("hoppscotch");
+        expect(parsed.collection.name).toBe("Imported Hoppscotch Collections");
+        expect(parsed.collection.requests).toEqual([]);
+        expect(parsed.collection.folders.map((folder) => folder.name)).toEqual(["First Collection", "Second Collection"]);
+        expect(parsed.collection.folders[0].requests.map((request) => request.name)).toEqual(["Ping"]);
+        expect(parsed.collection.folders[1].folders[0].requests[0].body).toEqual(expect.objectContaining({
+            type: "json",
+            json: "{\"pong\":true}",
         }));
     });
 

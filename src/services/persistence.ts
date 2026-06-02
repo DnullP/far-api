@@ -4,8 +4,10 @@
  */
 import { FAR_API_COMMANDS } from "../api/commandIds";
 import { invokeCommand } from "../api/tauriClient";
-import { createRequestAuth } from "../types/api";
-import type { Collection, ApiRequest, Environment, KeyValuePair, RequestAuth, RequestBody } from "../types/api";
+import type { RunnerReport } from "./collectionRunner";
+import { createRequestAuth, createRequestScripts } from "../types/api";
+import { isFolder } from "../types/api";
+import type { Collection, ApiRequest, Environment, KeyValuePair, RequestAuth, RequestBody, RequestFolder, RequestScripts } from "../types/api";
 
 /* ---------- Backend DTOs ---------- */
 
@@ -26,6 +28,7 @@ interface BackendRequestBody {
 interface BackendApiRequest {
     id: string;
     collectionId: string;
+    folderId?: string | null;
     name: string;
     method: string;
     url: string;
@@ -33,14 +36,28 @@ interface BackendApiRequest {
     headers: BackendKeyValuePair[];
     body: BackendRequestBody;
     auth?: RequestAuth;
+    scripts?: RequestScripts;
     sortOrder: number;
 }
+
+interface BackendRequestFolder {
+    id: string;
+    collectionId: string;
+    parentFolderId?: string | null;
+    name: string;
+    sortOrder: number;
+    children: BackendCollectionItem[];
+}
+
+type BackendCollectionItem =
+    | ({ type: "folder" } & BackendRequestFolder)
+    | ({ type: "request" } & BackendApiRequest);
 
 interface BackendCollection {
     id: string;
     name: string;
     sortOrder: number;
-    items: BackendApiRequest[];
+    items: BackendCollectionItem[];
 }
 
 interface BackendEnvironmentVariable {
@@ -72,6 +89,11 @@ export interface HistoryEntry {
     createdAt: string;
 }
 
+export interface RunnerReportEntry extends RunnerReport {
+    id: string;
+    createdAt: string;
+}
+
 /* ---------- Converters ---------- */
 
 function toFrontendRequest(r: BackendApiRequest): ApiRequest {
@@ -89,14 +111,27 @@ function toFrontendRequest(r: BackendApiRequest): ApiRequest {
             raw: r.body.raw,
         },
         auth: createRequestAuth(r.auth),
+        scripts: createRequestScripts(r.scripts),
     };
+}
+
+function toFrontendCollectionItem(item: BackendCollectionItem): RequestFolder | ApiRequest {
+    if (item.type === "folder") {
+        return {
+            id: item.id,
+            name: item.name,
+            children: item.children.map(toFrontendCollectionItem),
+        };
+    }
+
+    return toFrontendRequest(item);
 }
 
 function toFrontendCollection(c: BackendCollection): Collection {
     return {
         id: c.id,
         name: c.name,
-        items: c.items.map(toFrontendRequest),
+        items: c.items.map(toFrontendCollectionItem),
     };
 }
 
@@ -132,18 +167,76 @@ export async function reorderCollectionsApi(collectionIds: string[]): Promise<vo
     await invokeCommand<void>(FAR_API_COMMANDS.reorderCollections, { collectionIds });
 }
 
+/* ---------- Folders ---------- */
+
+export async function createFolderApi(input: {
+    collectionId: string;
+    parentFolderId?: string | null;
+    name: string;
+}): Promise<RequestFolder> {
+    const data = await invokeCommand<BackendRequestFolder>(FAR_API_COMMANDS.createFolder, {
+        input: {
+            collectionId: input.collectionId,
+            parentFolderId: input.parentFolderId ?? null,
+            name: input.name,
+        },
+    });
+    return {
+        id: data.id,
+        name: data.name,
+        children: data.children.map(toFrontendCollectionItem),
+    };
+}
+
+export async function renameFolderApi(id: string, name: string): Promise<void> {
+    await invokeCommand<void>(FAR_API_COMMANDS.renameFolder, { id, name });
+}
+
+export async function deleteFolderApi(id: string): Promise<void> {
+    await invokeCommand<void>(FAR_API_COMMANDS.deleteFolder, { id });
+}
+
+export async function moveFolderApi(input: {
+    folderId: string;
+    targetCollectionId: string;
+    targetParentFolderId?: string | null;
+    beforeItemId?: string | null;
+}): Promise<void> {
+    await invokeCommand<void>(FAR_API_COMMANDS.moveFolder, {
+        input: {
+            folderId: input.folderId,
+            targetCollectionId: input.targetCollectionId,
+            targetParentFolderId: input.targetParentFolderId ?? null,
+            beforeItemId: input.beforeItemId ?? null,
+        },
+    });
+}
+
 /* ---------- Requests ---------- */
 
-export async function createRequestApi(collectionId: string, name: string): Promise<ApiRequest> {
-    const data = await invokeCommand<BackendApiRequest>(FAR_API_COMMANDS.createRequest, { collectionId, name });
+export async function createRequestApi(
+    collectionId: string,
+    name: string,
+    folderId?: string | null,
+): Promise<ApiRequest> {
+    const data = await invokeCommand<BackendApiRequest>(FAR_API_COMMANDS.createRequest, {
+        collectionId,
+        name,
+        folderId: folderId ?? null,
+    });
     return toFrontendRequest(data);
 }
 
-export async function updateRequestApi(request: ApiRequest, collectionId: string): Promise<void> {
+export async function updateRequestApi(
+    request: ApiRequest,
+    collectionId: string,
+    folderId?: string | null,
+): Promise<void> {
     await invokeCommand<void>(FAR_API_COMMANDS.updateRequest, {
         request: {
             id: request.id,
             collectionId,
+            folderId: folderId ?? null,
             name: request.name,
             method: request.method,
             url: request.url,
@@ -156,6 +249,7 @@ export async function updateRequestApi(request: ApiRequest, collectionId: string
                 raw: request.body.raw,
             },
             auth: createRequestAuth(request.auth),
+            scripts: createRequestScripts(request.scripts),
             sortOrder: 0,
         },
     });
@@ -168,15 +262,23 @@ export async function deleteRequestApi(id: string): Promise<void> {
 export async function moveRequestApi(input: {
     requestId: string;
     targetCollectionId: string;
+    targetFolderId?: string | null;
     beforeRequestId?: string | null;
 }): Promise<void> {
     await invokeCommand<void>(FAR_API_COMMANDS.moveRequest, {
         input: {
             requestId: input.requestId,
             targetCollectionId: input.targetCollectionId,
+            targetFolderId: input.targetFolderId ?? null,
             beforeRequestId: input.beforeRequestId ?? null,
         },
     });
+}
+
+export function flattenCollectionItems(items: Collection["items"]): ApiRequest[] {
+    return items.flatMap((item) =>
+        isFolder(item) ? flattenCollectionItems(item.children) : [item],
+    );
 }
 
 /* ---------- Environments ---------- */
@@ -274,4 +376,21 @@ export async function clearHistory(): Promise<void> {
 
 export async function deleteHistoryEntry(id: string): Promise<void> {
     await invokeCommand<void>(FAR_API_COMMANDS.deleteHistoryEntry, { id });
+}
+
+/* ---------- Runner Reports ---------- */
+
+export async function addRunnerReport(report: RunnerReport): Promise<RunnerReportEntry> {
+    return invokeCommand<RunnerReportEntry>(FAR_API_COMMANDS.addRunnerReport, { report });
+}
+
+export async function listRunnerReports(limit?: number, offset?: number): Promise<RunnerReportEntry[]> {
+    return invokeCommand<RunnerReportEntry[]>(FAR_API_COMMANDS.listRunnerReports, {
+        limit: limit ?? null,
+        offset: offset ?? null,
+    });
+}
+
+export async function deleteRunnerReport(id: string): Promise<void> {
+    await invokeCommand<void>(FAR_API_COMMANDS.deleteRunnerReport, { id });
 }

@@ -14,10 +14,11 @@ export default defineConfig({
     headless: true,
   },
   webServer: {
-    command: "npx vite --port 1421 --host 127.0.0.1",
+    command: "bun run build:layout-v2 && npx vite --port 1421 --host 127.0.0.1 --strictPort",
     cwd: __dirname,
     port: 1421,
-    reuseExistingServer: true,
+    reuseExistingServer: false,
+    timeout: 120_000,
   },
   projects: [
     {

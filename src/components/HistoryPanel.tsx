@@ -4,7 +4,7 @@ import { RotateCcw, Search, Trash2, X } from "lucide-react";
 import { useAppDispatch, useAppState } from "../store/appStore";
 import { clearHistory, deleteHistoryEntry } from "../services/persistence";
 import type { HistoryEntry } from "../services/persistence";
-import { createRequestAuth, type ApiRequest, type HttpMethod, type KeyValuePair } from "../types/api";
+import { createRequestAuth, createRequestScripts, type ApiRequest, type HttpMethod, type KeyValuePair } from "../types/api";
 import "./HistoryPanel.css";
 
 const METHOD_COLORS: Record<string, string> = {
@@ -65,6 +65,7 @@ function createHistoryReplayRequest(entry: HistoryEntry): ApiRequest {
         headers,
         body: inferReplayBody(entry.requestBody, headers),
         auth: createRequestAuth(),
+        scripts: createRequestScripts(),
     };
 }
 

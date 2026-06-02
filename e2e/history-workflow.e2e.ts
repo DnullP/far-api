@@ -98,10 +98,21 @@ test.describe("History user workflows", () => {
     await expect(page.locator(".history-entry", { hasText: "https://mock.local/history-search" })).toBeVisible();
 
     await expect(page.locator(".history-entry")).toHaveCSS("user-select", "none");
+    await expect(page.locator(".history-panel .panel-toolbar")).toHaveCSS("user-select", "none");
     await expect(page.locator(".history-entry")).toHaveCSS("cursor", "pointer");
     await expect(page.locator(".history-entry").locator(".history-url")).toHaveCSS("cursor", "pointer");
 
     const historyEntry = page.locator(".history-entry", { hasText: "https://mock.local/history-search" }).first();
+    await historyEntry.click({ button: "right" });
+    await expect(historyEntry).toBeVisible();
+    await historyEntry.dblclick();
+    await expect(activeEditor(page).locator("input.url-input")).toHaveValue("https://mock.local/history-search");
+
+    await openHistoryPanel(page);
+    const dragHistoryEntry = page.locator(".history-entry", { hasText: "https://mock.local/history-search" }).first();
+    await dragHistoryEntry.dragTo(page.locator(".history-panel .panel-toolbar"));
+    await expect(page.locator(".history-entry", { hasText: "https://mock.local/history-search" })).toBeVisible();
+
     await historyEntry.click();
     await expect(activeEditor(page)).toBeVisible();
     await expect(activeEditor(page).locator("input.url-input")).toHaveValue("https://mock.local/history-search");

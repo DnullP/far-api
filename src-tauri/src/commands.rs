@@ -9,6 +9,10 @@ pub const COLLECTION_COMMAND_IDS: &[&str] = &[
     "delete_collection",
     "rename_collection",
     "reorder_collections",
+    "create_folder",
+    "rename_folder",
+    "delete_folder",
+    "move_folder",
 ];
 
 pub const REQUEST_COMMAND_IDS: &[&str] = &[
@@ -42,6 +46,13 @@ fn default_request_auth() -> RequestAuth {
         api_key_name: String::new(),
         api_key_value: String::new(),
         api_key_placement: default_api_key_placement(),
+    }
+}
+
+fn default_request_scripts() -> RequestScripts {
+    RequestScripts {
+        pre_request: String::new(),
+        post_response: String::new(),
     }
 }
 
@@ -83,10 +94,20 @@ pub struct RequestAuth {
 }
 
 #[derive(Serialize, Deserialize, Clone)]
+pub struct RequestScripts {
+    #[serde(rename = "preRequest", default)]
+    pub pre_request: String,
+    #[serde(rename = "postResponse", default)]
+    pub post_response: String,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
 pub struct ApiRequestDto {
     pub id: String,
     #[serde(rename = "collectionId")]
     pub collection_id: String,
+    #[serde(rename = "folderId")]
+    pub folder_id: Option<String>,
     pub name: String,
     pub method: String,
     pub url: String,
@@ -94,8 +115,32 @@ pub struct ApiRequestDto {
     pub headers: Vec<KeyValuePair>,
     pub body: RequestBody,
     pub auth: RequestAuth,
+    #[serde(default = "default_request_scripts")]
+    pub scripts: RequestScripts,
     #[serde(rename = "sortOrder")]
     pub sort_order: i64,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(tag = "type")]
+pub enum CollectionItemDto {
+    #[serde(rename = "folder")]
+    Folder(RequestFolderDto),
+    #[serde(rename = "request")]
+    Request(ApiRequestDto),
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct RequestFolderDto {
+    pub id: String,
+    #[serde(rename = "collectionId")]
+    pub collection_id: String,
+    #[serde(rename = "parentFolderId")]
+    pub parent_folder_id: Option<String>,
+    pub name: String,
+    #[serde(rename = "sortOrder")]
+    pub sort_order: i64,
+    pub children: Vec<CollectionItemDto>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -104,7 +149,7 @@ pub struct CollectionDto {
     pub name: String,
     #[serde(rename = "sortOrder")]
     pub sort_order: i64,
-    pub items: Vec<ApiRequestDto>,
+    pub items: Vec<CollectionItemDto>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -128,8 +173,31 @@ pub struct MoveRequestInput {
     pub request_id: String,
     #[serde(rename = "targetCollectionId")]
     pub target_collection_id: String,
+    #[serde(rename = "targetFolderId")]
+    pub target_folder_id: Option<String>,
     #[serde(rename = "beforeRequestId")]
     pub before_request_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct MoveFolderInput {
+    #[serde(rename = "folderId")]
+    pub folder_id: String,
+    #[serde(rename = "targetCollectionId")]
+    pub target_collection_id: String,
+    #[serde(rename = "targetParentFolderId")]
+    pub target_parent_folder_id: Option<String>,
+    #[serde(rename = "beforeItemId")]
+    pub before_item_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct CreateFolderInput {
+    #[serde(rename = "collectionId")]
+    pub collection_id: String,
+    #[serde(rename = "parentFolderId")]
+    pub parent_folder_id: Option<String>,
+    pub name: String,
 }
 
 /* ---------- Tauri commands: Collections ---------- */
@@ -154,47 +222,11 @@ pub fn list_collections(
 
     let mut result = Vec::new();
     for (cid, cname, csort) in collections {
-        let mut req_stmt = conn
-            .prepare(
-                "SELECT id, name, method, url, params_json, headers_json, body_json, auth_json, sort_order
-                 FROM requests WHERE collection_id = ?1 ORDER BY sort_order, created_at",
-            )
-            .map_err(|e| e.to_string())?;
-
-        let items: Vec<ApiRequestDto> = req_stmt
-            .query_map(params![cid], |row| {
-                let params_str: String = row.get(4)?;
-                let headers_str: String = row.get(5)?;
-                let body_str: String = row.get(6)?;
-                let auth_str: String = row.get(7)?;
-                Ok(ApiRequestDto {
-                    id: row.get(0)?,
-                    collection_id: cid.clone(),
-                    name: row.get(1)?,
-                    method: row.get(2)?,
-                    url: row.get(3)?,
-                    params: serde_json::from_str(&params_str).unwrap_or_default(),
-                    headers: serde_json::from_str(&headers_str).unwrap_or_default(),
-                    body: serde_json::from_str(&body_str).unwrap_or_else(|_| RequestBody {
-                        body_type: "none".into(),
-                        json: "{}".into(),
-                        form: vec![],
-                        raw: String::new(),
-                    }),
-                    auth: serde_json::from_str(&auth_str)
-                        .unwrap_or_else(|_| default_request_auth()),
-                    sort_order: row.get(8)?,
-                })
-            })
-            .map_err(|e| e.to_string())?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| e.to_string())?;
-
         result.push(CollectionDto {
+            items: collection_items_for_parent(&conn, &cid, None)?,
             id: cid,
             name: cname,
             sort_order: csort,
-            items,
         });
     }
 
@@ -296,6 +328,182 @@ pub fn reorder_collections(
     Ok(())
 }
 
+#[tauri::command]
+pub fn create_folder(
+    db: tauri::State<'_, Db>,
+    input: CreateFolderInput,
+    trace_id: Option<String>,
+) -> Result<RequestFolderDto, String> {
+    let id = uuid_v4();
+    info!(
+        "[trace={}] [collections] Creating folder '{}' in collection={} parent={:?} (id={})",
+        trace_ref(&trace_id),
+        input.name,
+        input.collection_id,
+        input.parent_folder_id,
+        id,
+    );
+    let conn = db.conn();
+    ensure_collection_exists(&conn, &input.collection_id)?;
+    if let Some(parent_folder_id) = &input.parent_folder_id {
+        ensure_folder_in_collection(&conn, parent_folder_id, &input.collection_id)?;
+    }
+
+    let sort_order = next_child_sort_order(
+        &conn,
+        &input.collection_id,
+        input.parent_folder_id.as_deref(),
+    )?;
+    conn.execute(
+        "INSERT INTO request_folders (id, collection_id, parent_folder_id, name, sort_order)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![id, input.collection_id, input.parent_folder_id, input.name, sort_order],
+    )
+    .map_err(|e| e.to_string())?;
+
+    info!("[trace={}] [collections] Created folder id={}", trace_ref(&trace_id), id);
+    Ok(RequestFolderDto {
+        id,
+        collection_id: input.collection_id,
+        parent_folder_id: input.parent_folder_id,
+        name: input.name,
+        sort_order,
+        children: vec![],
+    })
+}
+
+#[tauri::command]
+pub fn rename_folder(
+    db: tauri::State<'_, Db>,
+    id: String,
+    name: String,
+    trace_id: Option<String>,
+) -> Result<(), String> {
+    info!(
+        "[trace={}] [collections] Renaming folder id={} to '{}'",
+        trace_ref(&trace_id),
+        id,
+        name,
+    );
+    let conn = db.conn();
+    conn.execute(
+        "UPDATE request_folders SET name = ?1, updated_at = datetime('now') WHERE id = ?2",
+        params![name, id],
+    )
+    .map_err(|e| e.to_string())?;
+    info!("[trace={}] [collections] Renamed folder id={}", trace_ref(&trace_id), id);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn delete_folder(
+    db: tauri::State<'_, Db>,
+    id: String,
+    trace_id: Option<String>,
+) -> Result<(), String> {
+    info!("[trace={}] [collections] Deleting folder id={}", trace_ref(&trace_id), id);
+    let conn = db.conn();
+    conn.execute("DELETE FROM request_folders WHERE id = ?1", params![id])
+        .map_err(|e| { error!("[collections] Delete folder failed for id={}: {}", id, e); e.to_string() })?;
+    info!("[trace={}] [collections] Deleted folder id={}", trace_ref(&trace_id), id);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn move_folder(
+    db: tauri::State<'_, Db>,
+    input: MoveFolderInput,
+    trace_id: Option<String>,
+) -> Result<(), String> {
+    info!(
+        "[trace={}] [collections] Moving folder id={} to collection={} parent={:?} before={:?}",
+        trace_ref(&trace_id),
+        input.folder_id,
+        input.target_collection_id,
+        input.target_parent_folder_id,
+        input.before_item_id,
+    );
+
+    if input.target_parent_folder_id.as_deref() == Some(input.folder_id.as_str()) {
+        return Err("folder cannot be moved into itself".to_string());
+    }
+
+    let mut conn = db.conn();
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+
+    let (source_collection_id, source_parent_folder_id): (String, Option<String>) = tx
+        .query_row(
+            "SELECT collection_id, parent_folder_id FROM request_folders WHERE id = ?1",
+            params![input.folder_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(|e| format!("folder not found: {}", e))?;
+
+    tx.query_row(
+        "SELECT id FROM collections WHERE id = ?1",
+        params![input.target_collection_id],
+        |row| row.get::<_, String>(0),
+    )
+    .map_err(|e| format!("target collection not found: {}", e))?;
+
+    if let Some(target_parent_folder_id) = &input.target_parent_folder_id {
+        let parent_collection_id: String = tx
+            .query_row(
+                "SELECT collection_id FROM request_folders WHERE id = ?1",
+                params![target_parent_folder_id],
+                |row| row.get(0),
+            )
+            .map_err(|e| format!("target parent folder not found: {}", e))?;
+        if parent_collection_id != input.target_collection_id {
+            return Err("target parent folder is not in target collection".to_string());
+        }
+        if is_descendant_folder(&tx, target_parent_folder_id, &input.folder_id)? {
+            return Err("folder cannot be moved into its descendant".to_string());
+        }
+    }
+
+    if let Some(before_item_id) = &input.before_item_id {
+        let (before_collection_id, before_parent_folder_id) =
+            child_location_by_id(&tx, before_item_id)
+                .map_err(|e| format!("before item not found: {}", e))?;
+        if before_collection_id != input.target_collection_id {
+            return Err("before item is not in target collection".to_string());
+        }
+        if before_parent_folder_id != input.target_parent_folder_id {
+            return Err("before item is not in target parent folder".to_string());
+        }
+    }
+
+    tx.execute(
+        "UPDATE request_folders
+         SET collection_id = ?1, parent_folder_id = ?2, updated_at = datetime('now')
+         WHERE id = ?3",
+        params![
+            input.target_collection_id,
+            input.target_parent_folder_id,
+            input.folder_id,
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+    update_descendant_collection_ids(&tx, &input.folder_id, &input.target_collection_id)?;
+
+    if source_collection_id != input.target_collection_id ||
+        source_parent_folder_id != input.target_parent_folder_id
+    {
+        reindex_children_in_parent(&tx, &source_collection_id, source_parent_folder_id.as_deref(), None)?;
+    }
+    reindex_children_in_parent(
+        &tx,
+        &input.target_collection_id,
+        input.target_parent_folder_id.as_deref(),
+        Some((&input.folder_id, input.before_item_id.as_deref())),
+    )?;
+
+    tx.commit().map_err(|e| e.to_string())?;
+    info!("[trace={}] [collections] Moved folder id={}", trace_ref(&trace_id), input.folder_id);
+    Ok(())
+}
+
 /* ---------- Tauri commands: Requests ---------- */
 
 #[tauri::command]
@@ -303,21 +511,28 @@ pub fn create_request(
     db: tauri::State<'_, Db>,
     collection_id: String,
     name: String,
+    folder_id: Option<String>,
     trace_id: Option<String>,
 ) -> Result<ApiRequestDto, String> {
     let id = uuid_v4();
     info!(
-        "[trace={}] [requests] Creating request '{}' in collection={} (id={})",
+        "[trace={}] [requests] Creating request '{}' in collection={} folder={:?} (id={})",
         trace_ref(&trace_id),
         name,
         collection_id,
+        folder_id,
         id,
     );
     let conn = db.conn();
-    let sort_order = next_request_sort_order(&conn, &collection_id)?;
+    ensure_collection_exists(&conn, &collection_id)?;
+    if let Some(target_folder_id) = &folder_id {
+        ensure_folder_in_collection(&conn, target_folder_id, &collection_id)?;
+    }
+    let sort_order = next_child_sort_order(&conn, &collection_id, folder_id.as_deref())?;
     conn.execute(
-        "INSERT INTO requests (id, collection_id, name, sort_order) VALUES (?1, ?2, ?3, ?4)",
-        params![id, collection_id, name, sort_order],
+        "INSERT INTO requests (id, collection_id, folder_id, name, sort_order)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![id, collection_id, folder_id, name, sort_order],
     )
     .map_err(|e| e.to_string())?;
 
@@ -325,6 +540,7 @@ pub fn create_request(
     Ok(ApiRequestDto {
         id,
         collection_id,
+        folder_id,
         name,
         method: "GET".into(),
         url: String::new(),
@@ -337,6 +553,7 @@ pub fn create_request(
             raw: String::new(),
         },
         auth: default_request_auth(),
+        scripts: default_request_scripts(),
         sort_order,
     })
 }
@@ -358,11 +575,12 @@ pub fn update_request(
     let headers_json = serde_json::to_string(&request.headers).map_err(|e| e.to_string())?;
     let body_json = serde_json::to_string(&request.body).map_err(|e| e.to_string())?;
     let auth_json = serde_json::to_string(&request.auth).map_err(|e| e.to_string())?;
+    let scripts_json = serde_json::to_string(&request.scripts).map_err(|e| e.to_string())?;
 
     let conn = db.conn();
     conn.execute(
-        "UPDATE requests SET name=?1, method=?2, url=?3, params_json=?4, headers_json=?5, body_json=?6, auth_json=?7, updated_at=datetime('now')
-         WHERE id=?8",
+        "UPDATE requests SET name=?1, method=?2, url=?3, params_json=?4, headers_json=?5, body_json=?6, auth_json=?7, scripts_json=?8, collection_id=?9, folder_id=?10, updated_at=datetime('now')
+         WHERE id=?11",
         params![
             request.name,
             request.method,
@@ -371,6 +589,9 @@ pub fn update_request(
             headers_json,
             body_json,
             auth_json,
+            scripts_json,
+            request.collection_id,
+            request.folder_id,
             request.id
         ],
     )
@@ -400,21 +621,22 @@ pub fn move_request(
     trace_id: Option<String>,
 ) -> Result<(), String> {
     info!(
-        "[trace={}] [requests] Moving request id={} to collection={} before={:?}",
+        "[trace={}] [requests] Moving request id={} to collection={} folder={:?} before={:?}",
         trace_ref(&trace_id),
         input.request_id,
         input.target_collection_id,
+        input.target_folder_id,
         input.before_request_id,
     );
 
     let mut conn = db.conn();
     let tx = conn.transaction().map_err(|e| e.to_string())?;
 
-    let source_collection_id: String = tx
+    let (source_collection_id, source_folder_id): (String, Option<String>) = tx
         .query_row(
-            "SELECT collection_id FROM requests WHERE id = ?1",
+            "SELECT collection_id, folder_id FROM requests WHERE id = ?1",
             params![input.request_id],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .map_err(|e| format!("request not found: {}", e))?;
 
@@ -425,31 +647,48 @@ pub fn move_request(
     )
     .map_err(|e| format!("target collection not found: {}", e))?;
 
-    if let Some(before_request_id) = &input.before_request_id {
-        let before_collection_id: String = tx
+    if let Some(target_folder_id) = &input.target_folder_id {
+        let folder_collection_id: String = tx
             .query_row(
-                "SELECT collection_id FROM requests WHERE id = ?1",
-                params![before_request_id],
+                "SELECT collection_id FROM request_folders WHERE id = ?1",
+                params![target_folder_id],
                 |row| row.get(0),
+            )
+            .map_err(|e| format!("target folder not found: {}", e))?;
+        if folder_collection_id != input.target_collection_id {
+            return Err("target folder is not in target collection".to_string());
+        }
+    }
+
+    if let Some(before_request_id) = &input.before_request_id {
+        let (before_collection_id, before_folder_id): (String, Option<String>) = tx
+            .query_row(
+                "SELECT collection_id, folder_id FROM requests WHERE id = ?1",
+                params![before_request_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .map_err(|e| format!("before request not found: {}", e))?;
         if before_collection_id != input.target_collection_id {
             return Err("before request is not in target collection".to_string());
         }
+        if before_folder_id != input.target_folder_id {
+            return Err("before request is not in target folder".to_string());
+        }
     }
 
     tx.execute(
-        "UPDATE requests SET collection_id = ?1, updated_at = datetime('now') WHERE id = ?2",
-        params![input.target_collection_id, input.request_id],
+        "UPDATE requests SET collection_id = ?1, folder_id = ?2, updated_at = datetime('now') WHERE id = ?3",
+        params![input.target_collection_id, input.target_folder_id, input.request_id],
     )
     .map_err(|e| e.to_string())?;
 
-    if source_collection_id != input.target_collection_id {
-        reindex_requests_in_collection(&tx, &source_collection_id, None)?;
+    if source_collection_id != input.target_collection_id || source_folder_id != input.target_folder_id {
+        reindex_children_in_parent(&tx, &source_collection_id, source_folder_id.as_deref(), None)?;
     }
-    reindex_requests_in_collection(
+    reindex_children_in_parent(
         &tx,
         &input.target_collection_id,
+        input.target_folder_id.as_deref(),
         Some((&input.request_id, input.before_request_id.as_deref())),
     )?;
 
@@ -620,39 +859,345 @@ fn next_collection_sort_order(conn: &rusqlite::Connection) -> Result<i64, String
     .map_err(|e| e.to_string())
 }
 
-fn next_request_sort_order(conn: &rusqlite::Connection, collection_id: &str) -> Result<i64, String> {
+fn ensure_collection_exists(conn: &rusqlite::Connection, collection_id: &str) -> Result<(), String> {
     conn.query_row(
-        "SELECT COALESCE(MAX(sort_order) + 1, 0) FROM requests WHERE collection_id = ?1",
+        "SELECT id FROM collections WHERE id = ?1",
         params![collection_id],
-        |row| row.get(0),
+        |row| row.get::<_, String>(0),
     )
-    .map_err(|e| e.to_string())
+    .map(|_| ())
+    .map_err(|e| format!("collection not found: {}", e))
 }
 
-fn request_ids_in_collection(
-    tx: &rusqlite::Transaction<'_>,
+fn ensure_folder_in_collection(
+    conn: &rusqlite::Connection,
+    folder_id: &str,
     collection_id: &str,
-) -> Result<Vec<String>, String> {
-    let mut stmt = tx
-        .prepare(
-            "SELECT id FROM requests WHERE collection_id = ?1 ORDER BY sort_order, created_at",
+) -> Result<(), String> {
+    let folder_collection_id: String = conn
+        .query_row(
+            "SELECT collection_id FROM request_folders WHERE id = ?1",
+            params![folder_id],
+            |row| row.get(0),
         )
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| format!("folder not found: {}", e))?;
 
-    let rows = stmt
-        .query_map(params![collection_id], |row| row.get(0))
+    if folder_collection_id != collection_id {
+        return Err("folder is not in target collection".to_string());
+    }
+
+    Ok(())
+}
+
+fn child_location_by_id(
+    tx: &rusqlite::Transaction<'_>,
+    item_id: &str,
+) -> Result<(String, Option<String>), rusqlite::Error> {
+    tx.query_row(
+        "SELECT collection_id, folder_id FROM requests WHERE id = ?1",
+        params![item_id],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )
+    .or_else(|_| {
+        tx.query_row(
+            "SELECT collection_id, parent_folder_id FROM request_folders WHERE id = ?1",
+            params![item_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+    })
+}
+
+fn is_descendant_folder(
+    tx: &rusqlite::Transaction<'_>,
+    candidate_folder_id: &str,
+    ancestor_folder_id: &str,
+) -> Result<bool, String> {
+    let mut current = Some(candidate_folder_id.to_string());
+    while let Some(folder_id) = current {
+        if folder_id == ancestor_folder_id {
+            return Ok(true);
+        }
+        current = tx
+            .query_row(
+                "SELECT parent_folder_id FROM request_folders WHERE id = ?1",
+                params![folder_id],
+                |row| row.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(false)
+}
+
+fn update_descendant_collection_ids(
+    tx: &rusqlite::Transaction<'_>,
+    folder_id: &str,
+    collection_id: &str,
+) -> Result<(), String> {
+    tx.execute(
+        "UPDATE requests SET collection_id = ?1, updated_at = datetime('now') WHERE folder_id = ?2",
+        params![collection_id, folder_id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    let child_folder_ids = tx
+        .prepare("SELECT id FROM request_folders WHERE parent_folder_id = ?1")
+        .map_err(|e| e.to_string())?
+        .query_map(params![folder_id], |row| row.get::<_, String>(0))
         .map_err(|e| e.to_string())?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
-    Ok(rows)
+
+    for child_folder_id in child_folder_ids {
+        tx.execute(
+            "UPDATE request_folders SET collection_id = ?1, updated_at = datetime('now') WHERE id = ?2",
+            params![collection_id, child_folder_id],
+        )
+        .map_err(|e| e.to_string())?;
+        update_descendant_collection_ids(tx, &child_folder_id, collection_id)?;
+    }
+
+    Ok(())
 }
 
-fn reindex_requests_in_collection(
+fn parent_clause(parent_folder_id: Option<&str>) -> &'static str {
+    if parent_folder_id.is_some() {
+        "folder_id = ?2"
+    } else {
+        "folder_id IS NULL"
+    }
+}
+
+fn update_request_parent_clause(parent_folder_id: Option<&str>) -> &'static str {
+    if parent_folder_id.is_some() {
+        "folder_id = ?3"
+    } else {
+        "folder_id IS NULL"
+    }
+}
+
+fn update_folder_parent_clause(parent_folder_id: Option<&str>) -> &'static str {
+    if parent_folder_id.is_some() {
+        "parent_folder_id = ?3"
+    } else {
+        "parent_folder_id IS NULL"
+    }
+}
+
+fn folder_parent_clause(parent_folder_id: Option<&str>) -> &'static str {
+    if parent_folder_id.is_some() {
+        "parent_folder_id = ?2"
+    } else {
+        "parent_folder_id IS NULL"
+    }
+}
+
+fn next_child_sort_order(
+    conn: &rusqlite::Connection,
+    collection_id: &str,
+    parent_folder_id: Option<&str>,
+) -> Result<i64, String> {
+    let request_sql = format!(
+        "SELECT COALESCE(MAX(sort_order), -1) FROM requests WHERE collection_id = ?1 AND {}",
+        parent_clause(parent_folder_id),
+    );
+    let folder_sql = format!(
+        "SELECT COALESCE(MAX(sort_order), -1) FROM request_folders WHERE collection_id = ?1 AND {}",
+        folder_parent_clause(parent_folder_id),
+    );
+
+    let request_max: i64 = if let Some(parent_id) = parent_folder_id {
+        conn.query_row(&request_sql, params![collection_id, parent_id], |row| row.get(0))
+    } else {
+        conn.query_row(&request_sql, params![collection_id], |row| row.get(0))
+    }
+    .map_err(|e| e.to_string())?;
+
+    let folder_max: i64 = if let Some(parent_id) = parent_folder_id {
+        conn.query_row(&folder_sql, params![collection_id, parent_id], |row| row.get(0))
+    } else {
+        conn.query_row(&folder_sql, params![collection_id], |row| row.get(0))
+    }
+    .map_err(|e| e.to_string())?;
+
+    Ok(std::cmp::max(request_max, folder_max) + 1)
+}
+
+fn request_dto_from_row(
+    row: &rusqlite::Row<'_>,
+    collection_id: &str,
+    folder_id: Option<String>,
+) -> rusqlite::Result<ApiRequestDto> {
+    let params_str: String = row.get(4)?;
+    let headers_str: String = row.get(5)?;
+    let body_str: String = row.get(6)?;
+    let auth_str: String = row.get(7)?;
+    let scripts_str: String = row.get(8)?;
+
+    Ok(ApiRequestDto {
+        id: row.get(0)?,
+        collection_id: collection_id.to_string(),
+        folder_id,
+        name: row.get(1)?,
+        method: row.get(2)?,
+        url: row.get(3)?,
+        params: serde_json::from_str(&params_str).unwrap_or_default(),
+        headers: serde_json::from_str(&headers_str).unwrap_or_default(),
+        body: serde_json::from_str(&body_str).unwrap_or_else(|_| RequestBody {
+            body_type: "none".into(),
+            json: "{}".into(),
+            form: vec![],
+            raw: String::new(),
+        }),
+        auth: serde_json::from_str(&auth_str).unwrap_or_else(|_| default_request_auth()),
+        scripts: serde_json::from_str(&scripts_str).unwrap_or_else(|_| default_request_scripts()),
+        sort_order: row.get(9)?,
+    })
+}
+
+fn collection_items_for_parent(
+    conn: &rusqlite::Connection,
+    collection_id: &str,
+    parent_folder_id: Option<&str>,
+) -> Result<Vec<CollectionItemDto>, String> {
+    let folder_sql = format!(
+        "SELECT id, name, sort_order FROM request_folders WHERE collection_id = ?1 AND {} ORDER BY sort_order, created_at",
+        folder_parent_clause(parent_folder_id),
+    );
+    let mut folder_stmt = conn.prepare(&folder_sql).map_err(|e| e.to_string())?;
+    let folders: Vec<(String, String, i64)> = if let Some(parent_id) = parent_folder_id {
+        folder_stmt
+            .query_map(params![collection_id, parent_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?
+    } else {
+        folder_stmt
+            .query_map(params![collection_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?
+    };
+
+    let request_sql = format!(
+        "SELECT id, name, method, url, params_json, headers_json, body_json, auth_json, scripts_json, sort_order
+         FROM requests WHERE collection_id = ?1 AND {} ORDER BY sort_order, created_at",
+        parent_clause(parent_folder_id),
+    );
+    let mut request_stmt = conn.prepare(&request_sql).map_err(|e| e.to_string())?;
+    let folder_id = parent_folder_id.map(str::to_string);
+    let requests: Vec<ApiRequestDto> = if let Some(parent_id) = parent_folder_id {
+        request_stmt
+            .query_map(params![collection_id, parent_id], |row| {
+                request_dto_from_row(row, collection_id, folder_id.clone())
+            })
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?
+    } else {
+        request_stmt
+            .query_map(params![collection_id], |row| request_dto_from_row(row, collection_id, None))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?
+    };
+
+    let mut items: Vec<(i64, CollectionItemDto)> = Vec::new();
+    for (folder_id, name, sort_order) in folders {
+        let children = collection_items_for_parent(conn, collection_id, Some(&folder_id))?;
+        items.push((
+            sort_order,
+            CollectionItemDto::Folder(RequestFolderDto {
+                id: folder_id,
+                collection_id: collection_id.to_string(),
+                parent_folder_id: parent_folder_id.map(str::to_string),
+                name,
+                sort_order,
+                children,
+            }),
+        ));
+    }
+    for request in requests {
+        items.push((request.sort_order, CollectionItemDto::Request(request)));
+    }
+
+    items.sort_by_key(|(sort_order, _)| *sort_order);
+    Ok(items.into_iter().map(|(_, item)| item).collect())
+}
+
+fn child_ids_in_parent(
     tx: &rusqlite::Transaction<'_>,
     collection_id: &str,
+    parent_folder_id: Option<&str>,
+) -> Result<Vec<String>, String> {
+    let request_sql = format!(
+        "SELECT id, sort_order, created_at FROM requests WHERE collection_id = ?1 AND {}",
+        update_request_parent_clause(parent_folder_id),
+    );
+    let folder_sql = format!(
+        "SELECT id, sort_order, created_at FROM request_folders WHERE collection_id = ?1 AND {}",
+        update_folder_parent_clause(parent_folder_id),
+    );
+
+    let mut rows: Vec<(String, i64, String)> = Vec::new();
+    if let Some(parent_id) = parent_folder_id {
+        let mut request_stmt = tx.prepare(&request_sql).map_err(|e| e.to_string())?;
+        rows.extend(
+            request_stmt
+                .query_map(params![collection_id, parent_id, parent_id], |row| {
+                    Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                })
+                .map_err(|e| e.to_string())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| e.to_string())?,
+        );
+        let mut folder_stmt = tx.prepare(&folder_sql).map_err(|e| e.to_string())?;
+        rows.extend(
+            folder_stmt
+                .query_map(params![collection_id, parent_id, parent_id], |row| {
+                    Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                })
+                .map_err(|e| e.to_string())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| e.to_string())?,
+        );
+    } else {
+        let mut request_stmt = tx.prepare(&request_sql).map_err(|e| e.to_string())?;
+        rows.extend(
+            request_stmt
+                .query_map(params![collection_id], |row| {
+                    Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                })
+                .map_err(|e| e.to_string())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| e.to_string())?,
+        );
+        let mut folder_stmt = tx.prepare(&folder_sql).map_err(|e| e.to_string())?;
+        rows.extend(
+            folder_stmt
+                .query_map(params![collection_id], |row| {
+                    Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                })
+                .map_err(|e| e.to_string())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| e.to_string())?,
+        );
+    }
+
+    rows.sort_by(|left, right| {
+        left.1
+            .cmp(&right.1)
+            .then_with(|| left.2.cmp(&right.2))
+    });
+    Ok(rows.into_iter().map(|(id, _, _)| id).collect())
+}
+
+fn reindex_children_in_parent(
+    tx: &rusqlite::Transaction<'_>,
+    collection_id: &str,
+    parent_folder_id: Option<&str>,
     move_spec: Option<(&str, Option<&str>)>,
 ) -> Result<(), String> {
-    let mut ids = request_ids_in_collection(tx, collection_id)?;
+    let mut ids = child_ids_in_parent(tx, collection_id, parent_folder_id)?;
     if let Some((request_id, before_request_id)) = move_spec {
         ids.retain(|id| id != request_id);
         let insert_at = before_request_id
@@ -664,6 +1209,11 @@ fn reindex_requests_in_collection(
     for (index, id) in ids.iter().enumerate() {
         tx.execute(
             "UPDATE requests SET sort_order = ?1, updated_at = datetime('now') WHERE id = ?2",
+            params![index as i64, id],
+        )
+        .map_err(|e| e.to_string())?;
+        tx.execute(
+            "UPDATE request_folders SET sort_order = ?1, updated_at = datetime('now') WHERE id = ?2",
             params![index as i64, id],
         )
         .map_err(|e| e.to_string())?;

@@ -65,6 +65,39 @@ body {
     box-sizing: border-box;
 }
 
+body,
+button,
+label,
+.far-api-shell,
+.settings-modal,
+.collection-modal,
+.env-modal,
+.curl-modal,
+.export-modal {
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+input,
+textarea,
+select,
+option,
+[contenteditable="true"],
+.response-body,
+.response-body *,
+.response-header-row,
+.response-header-row *,
+.script-console code,
+.script-console code *,
+.collection-rename-input,
+.body-textarea,
+.curl-modal-body textarea,
+.collection-modal-field textarea,
+.export-modal-json {
+    user-select: text;
+    -webkit-user-select: text;
+}
+
 button {
     font: inherit;
 }
@@ -103,16 +136,49 @@ button {
 
 .far-api-shell--tauri .layout-v2-tab-section__strip,
 .far-api-shell--tauri .layout-v2-panel-section__bar,
-.far-api-shell--tauri .layout-v2-activity-bar {
+.far-api-shell--tauri .layout-v2-activity-bar,
+.far-api-shell--tauri .layout-v2-panel-section__content,
+.far-api-shell--tauri .layout-v2-panel-section__content-inner,
+.far-api-shell--tauri .layout-v2-panel-section__pane,
+.far-api-shell--tauri .layout-v2-panel-section__pane-body,
+.far-api-shell--tauri .collections-panel,
+.far-api-shell--tauri .panel-toolbar,
+.far-api-shell--tauri .collections-tree,
+.far-api-shell--tauri .env-panel,
+.far-api-shell--tauri .env-list,
+.far-api-shell--tauri .history-panel,
+.far-api-shell--tauri .history-list,
+.far-api-shell--tauri .history-empty {
     -webkit-app-region: drag;
     app-region: drag;
 }
 
 .far-api-shell--tauri .window-no-drag,
+.far-api-shell--tauri [data-layout-role="activity-icon"],
+.far-api-shell--tauri [data-layout-role="panel"],
+.far-api-shell--tauri [role="button"],
+.far-api-shell--tauri a,
 .far-api-shell--tauri button,
 .far-api-shell--tauri input,
 .far-api-shell--tauri textarea,
-.far-api-shell--tauri select {
+.far-api-shell--tauri select,
+.far-api-shell--tauri option,
+.far-api-shell--tauri label,
+.far-api-shell--tauri [contenteditable="true"],
+.far-api-shell--tauri .collection-header,
+.far-api-shell--tauri .folder-item,
+.far-api-shell--tauri .request-item,
+.far-api-shell--tauri .env-item,
+.far-api-shell--tauri .history-entry,
+.far-api-shell--tauri .history-search,
+.far-api-shell--tauri .request-editor,
+.far-api-shell--tauri .response-viewer,
+.far-api-shell--tauri .settings-modal,
+.far-api-shell--tauri .collection-modal,
+.far-api-shell--tauri .env-modal,
+.far-api-shell--tauri .curl-modal,
+.far-api-shell--tauri .export-modal,
+.far-api-shell--tauri .context-menu {
     -webkit-app-region: no-drag;
     app-region: no-drag;
 }
@@ -125,6 +191,12 @@ button {
     gap: 0;
     background: transparent;
 }
+
+.far-api-workbench .layout-v2-panel-section__pane-body {
+    flex: 1;
+    min-height: 0;
+}
+
 .far-api-workbench .layout-v2-panel-section__empty-pane {
     border: none;
     border-radius: 0;

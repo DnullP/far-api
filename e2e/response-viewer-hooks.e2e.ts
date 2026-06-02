@@ -125,6 +125,7 @@ test.describe("ResponseViewer hook order regression", () => {
     await expect(
       page.locator(".response-headers-list .header-key").first()
     ).toBeVisible({ timeout: 3_000 });
+    await expect(page.locator(".response-header-row").first()).toHaveCSS("user-select", "text");
 
     // Switch back to Body tab
     const bodyTab = responseViewer.locator('button:text("Body")');
@@ -135,6 +136,9 @@ test.describe("ResponseViewer hook order regression", () => {
     await expect(page.locator("pre.response-body").first()).toBeVisible({
       timeout: 3_000,
     });
+    await expect(page.locator("pre.response-body").first()).toHaveCSS("user-select", "text");
+    await expect(responseViewer.locator(".response-tabs")).toHaveCSS("user-select", "none");
+    await expect(page.locator("input.url-input")).toHaveCSS("user-select", "text");
 
     // No hook errors
     const hookErrors = consoleErrors.filter(

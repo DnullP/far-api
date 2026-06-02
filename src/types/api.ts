@@ -31,6 +31,11 @@ export interface RequestAuth {
     apiKeyPlacement: ApiKeyPlacement;
 }
 
+export interface RequestScripts {
+    preRequest: string;
+    postResponse: string;
+}
+
 export interface ApiRequest {
     id: string;
     name: string;
@@ -40,6 +45,7 @@ export interface ApiRequest {
     headers: KeyValuePair[];
     body: RequestBody;
     auth: RequestAuth;
+    scripts: RequestScripts;
 }
 
 export interface ApiResponse {
@@ -97,6 +103,14 @@ export function createRequestAuth(overrides: Partial<RequestAuth> = {}): Request
     };
 }
 
+export function createRequestScripts(overrides: Partial<RequestScripts> = {}): RequestScripts {
+    return {
+        preRequest: "",
+        postResponse: "",
+        ...overrides,
+    };
+}
+
 export function createRequest(name = "New Request"): ApiRequest {
     return {
         id: crypto.randomUUID(),
@@ -107,11 +121,16 @@ export function createRequest(name = "New Request"): ApiRequest {
         headers: [createKeyValuePair()],
         body: { type: "none", json: "{}", form: [createKeyValuePair()], raw: "" },
         auth: createRequestAuth(),
+        scripts: createRequestScripts(),
     };
 }
 
 export function createCollection(name = "New Collection"): Collection {
     return { id: crypto.randomUUID(), name, items: [] };
+}
+
+export function createFolder(name = "New Folder"): RequestFolder {
+    return { id: crypto.randomUUID(), name, children: [] };
 }
 
 export function createEnvironment(name = "New Environment"): Environment {

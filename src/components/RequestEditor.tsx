@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import type { WorkbenchTabApi } from "layout-v2";
-import { type HttpMethod, type BodyType, type ApiRequest, type KeyValuePair, type RequestAuth } from "../types/api";
-import { createRequestAuth } from "../types/api";
+import { type HttpMethod, type BodyType, type ApiRequest, type KeyValuePair, type RequestAuth, type Collection } from "../types/api";
+import { createRequestAuth, isFolder } from "../types/api";
 import { useAppState, useAppDispatch } from "../store/appStore";
 import { KeyValueEditor } from "./KeyValueEditor";
 import { ResponseViewer } from "./ResponseViewer";
@@ -9,6 +9,13 @@ import { sendRequest } from "../services/httpClient";
 import { updateRequestApi, addHistory } from "../services/persistence";
 import { resolveRequest } from "../services/requestResolver";
 import { parseCurlCommand } from "../services/curlImporter";
+import {
+    runPostResponseScript,
+    runPreRequestScript,
+    stateWithScriptResult,
+    type ScriptExecutionResult,
+    type ScriptTestResult,
+} from "../services/scriptRunner";
 import { Send, ChevronDown, Import, X } from "lucide-react";
 import "./RequestEditor.css";
 
@@ -26,7 +33,27 @@ const METHOD_COLORS: Record<HttpMethod, string> = {
 
 const CURL_PREFIX_PATTERN = /^\s*(?:curl\s|curl$)/i;
 
-type ReqTab = "params" | "headers" | "auth" | "body";
+type ReqTab = "params" | "headers" | "auth" | "body" | "scripts";
+
+type CollectionItem = Collection["items"][number];
+
+function findRequestFolderId(items: CollectionItem[], requestId: string): string | null | undefined {
+    for (const item of items) {
+        if (isFolder(item)) {
+            const nested = findRequestFolderId(item.children, requestId);
+            if (nested !== undefined) {
+                return nested === null ? item.id : nested;
+            }
+            continue;
+        }
+
+        if (item.id === requestId) {
+            return null;
+        }
+    }
+
+    return undefined;
+}
 
 interface Props {
     params: Record<string, unknown>;
@@ -46,6 +73,7 @@ export function RequestEditor({ params, api }: Props) {
     const [curlModalOpen, setCurlModalOpen] = useState(false);
     const [curlDraft, setCurlDraft] = useState("");
     const [curlError, setCurlError] = useState("");
+    const [scriptResult, setScriptResult] = useState<ScriptExecutionResult | null>(null);
     const methodRef = useRef<HTMLDivElement>(null);
 
     // Resizable split state
@@ -104,9 +132,9 @@ export function RequestEditor({ params, api }: Props) {
             }
             saveTimerRef.current = setTimeout(() => {
                 // Find which collection this request belongs to
-                const col = state.collections.find((c) => c.items.some((item) => item.id === nextRequest.id));
+                const col = state.collections.find((c) => findRequestFolderId(c.items, nextRequest.id) !== undefined);
                 if (col) {
-                    updateRequestApi(nextRequest, col.id).catch((err) =>
+                    updateRequestApi(nextRequest, col.id, findRequestFolderId(col.items, nextRequest.id) ?? null).catch((err) =>
                         console.error("Failed to save request:", err),
                     );
                 }
@@ -162,13 +190,40 @@ export function RequestEditor({ params, api }: Props) {
         [request?.auth, updateReq],
     );
 
+    const updateScripts = useCallback(
+        (patch: Partial<ApiRequest["scripts"]>) => {
+            const currentScripts = request?.scripts ?? { preRequest: "", postResponse: "" };
+            updateReq({ scripts: { ...currentScripts, ...patch } });
+        },
+        [request?.scripts, updateReq],
+    );
+
     const handleSend = useCallback(async () => {
         if (!request) return;
         dispatch({ type: "SET_LOADING", tabId, loading: true });
         dispatch({ type: "SET_RESPONSE", tabId, response: null });
+        setScriptResult(null);
         try {
-            const resolvedRequest = resolveRequest(request, state);
+            const preResult = runPreRequestScript(request, state);
+            setScriptResult(preResult);
+            if (hasScriptFailures(preResult.tests)) {
+                throw new Error(scriptFailureMessage(preResult.tests));
+            }
+
+            const scriptState = stateWithScriptResult(state, preResult);
+            const resolvedRequest = resolveRequest(preResult.request, scriptState, {
+                variables: preResult.variables,
+            });
             const result = await sendRequest(resolvedRequest);
+            const postResult = runPostResponseScript(preResult.request, result, scriptState);
+            setScriptResult({
+                request: postResult.request,
+                environments: postResult.environments,
+                activeEnvironmentId: postResult.activeEnvironmentId,
+                variables: { ...preResult.variables, ...postResult.variables },
+                tests: [...preResult.tests, ...postResult.tests],
+                console: [...preResult.console, ...postResult.console],
+            });
             dispatch({ type: "SET_RESPONSE", tabId, response: result });
 
             // Record to history (fire-and-forget)
@@ -217,6 +272,7 @@ export function RequestEditor({ params, api }: Props) {
                 });
             }).catch(() => {});
         } catch (err) {
+            const body = err instanceof Error ? err.message : String(err);
             dispatch({
                 type: "SET_RESPONSE",
                 tabId,
@@ -224,7 +280,7 @@ export function RequestEditor({ params, api }: Props) {
                     status: 0,
                     statusText: "Error",
                     headers: {},
-                    body: String(err),
+                    body,
                     time: 0,
                     size: 0,
                 },
@@ -347,6 +403,15 @@ export function RequestEditor({ params, api }: Props) {
                         onClick={() => setActiveTab("body")}
                     >
                         Body
+                    </button>
+                    <button
+                        className={activeTab === "scripts" ? "active" : ""}
+                        onClick={() => setActiveTab("scripts")}
+                    >
+                        Scripts
+                        {(request.scripts.preRequest.trim() || request.scripts.postResponse.trim()) && (
+                            <span className="badge">1</span>
+                        )}
                     </button>
                 </div>
                 <div className="req-tab-content">
@@ -515,6 +580,15 @@ export function RequestEditor({ params, api }: Props) {
                             )}
                         </div>
                     )}
+                    {activeTab === "scripts" && (
+                        <ScriptEditor
+                            preRequest={request.scripts.preRequest}
+                            postResponse={request.scripts.postResponse}
+                            result={scriptResult}
+                            onPreRequestChange={(value) => updateScripts({ preRequest: value })}
+                            onPostResponseChange={(value) => updateScripts({ postResponse: value })}
+                        />
+                    )}
                 </div>
             </div>
 
@@ -545,6 +619,87 @@ export function RequestEditor({ params, api }: Props) {
                     }}
                     onConfirm={() => importCurl(curlDraft)}
                 />
+            )}
+        </div>
+    );
+}
+
+function hasScriptFailures(results: ScriptTestResult[]): boolean {
+    return results.some((result) => !result.passed);
+}
+
+function scriptFailureMessage(results: ScriptTestResult[]): string {
+    const firstFailure = results.find((result) => !result.passed);
+    return firstFailure?.error ? `Script failed: ${firstFailure.error}` : "Script failed.";
+}
+
+function ScriptEditor({
+    preRequest,
+    postResponse,
+    result,
+    onPreRequestChange,
+    onPostResponseChange,
+}: {
+    preRequest: string;
+    postResponse: string;
+    result: ScriptExecutionResult | null;
+    onPreRequestChange: (value: string) => void;
+    onPostResponseChange: (value: string) => void;
+}) {
+    return (
+        <div className="script-editor">
+            <div className="script-grid">
+                <label className="script-panel">
+                    <span>Pre-request Script</span>
+                    <textarea
+                        aria-label="Pre-request script"
+                        value={preRequest}
+                        spellCheck={false}
+                        placeholder="pm.request.headers.upsert({ key: 'X-Trace', value: 'trace-dev' });"
+                        onChange={(event) => onPreRequestChange(event.target.value)}
+                    />
+                </label>
+                <label className="script-panel">
+                    <span>Post-response Script</span>
+                    <textarea
+                        aria-label="Post-response script"
+                        value={postResponse}
+                        spellCheck={false}
+                        placeholder="pm.test('status is OK', () => pm.expect(pm.response.code).to.equal(200));"
+                        onChange={(event) => onPostResponseChange(event.target.value)}
+                    />
+                </label>
+            </div>
+            {result && (
+                <div className="script-result" aria-live="polite">
+                    {result.tests.length > 0 && (
+                        <div className="script-tests">
+                            {result.tests.map((test, index) => (
+                                <div
+                                    key={`${test.name}-${index}`}
+                                    className={`script-test ${test.passed ? "passed" : "failed"}`}
+                                >
+                                    <span>{test.passed ? "PASS" : "FAIL"}</span>
+                                    <strong>{test.name}</strong>
+                                    {test.error && <em>{test.error}</em>}
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                    {result.console.length > 0 && (
+                        <div className="script-console">
+                            {result.console.map((entry, index) => (
+                                <div key={`${entry.level}-${index}`}>
+                                    <span>{entry.level}</span>
+                                    <code>{entry.message}</code>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                    {result.tests.length === 0 && result.console.length === 0 && (
+                        <div className="script-empty-result">Scripts ran without output</div>
+                    )}
+                </div>
             )}
         </div>
     );

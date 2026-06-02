@@ -1,6 +1,6 @@
 use crate::backend_module_manifest::builtin_backend_module_contributions;
 use crate::commands::{COLLECTION_COMMAND_IDS, ENVIRONMENT_COMMAND_IDS, REQUEST_COMMAND_IDS};
-use crate::config_history::{CONFIG_COMMAND_IDS, HISTORY_COMMAND_IDS};
+use crate::config_history::{CONFIG_COMMAND_IDS, HISTORY_COMMAND_IDS, RUNNER_REPORT_COMMAND_IDS};
 use crate::host::commands::frontend_log_commands::FRONTEND_LOG_COMMAND_IDS;
 use crate::host::commands::http_commands::HTTP_COMMAND_IDS;
 use crate::module_contribution::collect_contributed_command_ids;
@@ -15,6 +15,7 @@ pub fn registered_command_ids() -> BTreeSet<&'static str> {
         ENVIRONMENT_COMMAND_IDS,
         CONFIG_COMMAND_IDS,
         HISTORY_COMMAND_IDS,
+        RUNNER_REPORT_COMMAND_IDS,
     ]
     .into_iter()
     .flat_map(|group| group.iter().copied())

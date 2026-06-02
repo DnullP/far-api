@@ -125,8 +125,47 @@ function postmanDocument() {
   };
 }
 
+function hoppscotchDocument() {
+  return {
+    v: 1,
+    name: "Hoppscotch Demo",
+    auth: {
+      authType: "bearer",
+      authActive: true,
+      token: "{{hoppscotch_token}}",
+    },
+    requests: [
+      {
+        v: "1",
+        name: "Hoppscotch List",
+        method: "GET",
+        endpoint: "https://mock.local/hoppscotch?debug=true",
+        params: [{ key: "limit", value: "10", active: true }],
+      },
+    ],
+    folders: [
+      {
+        name: "Nested",
+        requests: [
+          {
+            v: "1",
+            name: "Hoppscotch Create",
+            method: "POST",
+            endpoint: "https://mock.local/hoppscotch",
+            headers: [{ key: "Content-Type", value: "application/json", active: true }],
+            body: {
+              contentType: "application/json",
+              body: "{\"from\":\"hoppscotch\"}",
+            },
+          },
+        ],
+      },
+    ],
+  };
+}
+
 test.describe("API spec import workflows", () => {
-  test("imports OpenAPI, Swagger, and Postman JSON from the modal", async ({ page }) => {
+  test("imports OpenAPI, Swagger, Postman, and Hoppscotch JSON from the modal", async ({ page }) => {
     const capture = await openMockApp(page);
 
     await importByJson(page, openApiDocument());
@@ -139,11 +178,25 @@ test.describe("API spec import workflows", () => {
     await importByJson(page, postmanDocument());
     await expect(collection(page, "Postman Demo").locator(".request-item", { hasText: "Postman Echo" })).toBeVisible();
 
+    await importByJson(page, hoppscotchDocument());
+    await expect(collection(page, "Hoppscotch Demo").locator(".request-item", { hasText: "Hoppscotch List" })).toBeVisible();
+    await expect(collection(page, "Hoppscotch Demo").locator(".folder-item", { hasText: "Nested" })).toBeVisible();
+    await expect(collection(page, "Hoppscotch Demo").locator(".request-item", { hasText: "Hoppscotch Create" })).toBeVisible();
+
     await collection(page, "Postman Demo").locator(".request-item", { hasText: "Postman Echo" }).click();
     await expect(page.locator(".layout-v2-tab-section__card[data-layout-presentation-state='committed'] input.url-input")).toHaveValue("https://mock.local/postman");
 
+    await collection(page, "Hoppscotch Demo").locator(".request-item", { hasText: "Hoppscotch Create" }).click();
+    await expect(page.locator(".layout-v2-tab-section__card[data-layout-presentation-state='committed'] input.url-input")).toHaveValue("https://mock.local/hoppscotch");
+
     await expect.poll(() => capture.infos.some((line) =>
       line.includes("[tauriClient] invoke start") && line.includes("create_collection"),
+    )).toBe(true);
+    await expect.poll(() => capture.infos.some((line) =>
+      line.includes("[mock:tauriClient]") &&
+      line.includes("invoke success") &&
+      line.includes("create_folder") &&
+      line.includes("trace=far-api:create_folder"),
     )).toBe(true);
     await expect.poll(() => capture.infos.some((line) =>
       line.includes("[mock:tauriClient]") &&
@@ -172,13 +225,15 @@ test.describe("API spec import workflows", () => {
 
     await page.getByTitle("Import Collection").click();
     await page.getByLabel("Import JSON file").setInputFiles({
-      name: "openapi-demo.json",
+      name: "hoppscotch-demo.json",
       mimeType: "application/json",
-      buffer: Buffer.from(JSON.stringify(openApiDocument())),
+      buffer: Buffer.from(JSON.stringify(hoppscotchDocument())),
     });
-    await expect(page.locator(".collection-import-summary", { hasText: "OpenAPI Demo" })).toBeVisible();
+    await expect(page.locator(".collection-import-summary", { hasText: "Hoppscotch Demo" })).toBeVisible();
+    await expect(page.locator(".collection-import-summary", { hasText: "hoppscotch" })).toBeVisible();
     await page.getByRole("button", { name: "Import", exact: true }).click();
-    await expect(collection(page, "OpenAPI Demo").locator(".request-item", { hasText: "Create User" })).toBeVisible();
+    await expect(collection(page, "Hoppscotch Demo").locator(".folder-item", { hasText: "Nested" })).toBeVisible();
+    await expect(collection(page, "Hoppscotch Demo").locator(".request-item", { hasText: "Hoppscotch Create" })).toBeVisible();
 
     expectNoErrors(capture);
   });

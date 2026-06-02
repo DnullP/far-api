@@ -55,6 +55,10 @@ pub fn run() {
             commands::delete_collection,
             commands::rename_collection,
             commands::reorder_collections,
+            commands::create_folder,
+            commands::rename_folder,
+            commands::delete_folder,
+            commands::move_folder,
             commands::create_request,
             commands::update_request,
             commands::delete_request,
@@ -73,6 +77,9 @@ pub fn run() {
             config_history::list_history,
             config_history::clear_history,
             config_history::delete_history_entry,
+            config_history::add_runner_report,
+            config_history::list_runner_reports,
+            config_history::delete_runner_report,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

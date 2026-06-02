@@ -17,6 +17,8 @@ import {
     usePanelDefinitions,
     useTabComponentRenderers,
 } from "./host/registry";
+import { isTauriRuntime } from "./api/windowDrag";
+import { useWindowDragRegions } from "./hooks/useWindowDragRegions";
 import "./App.css";
 
 const THEME_STORAGE_KEY = "far-api.theme";
@@ -33,18 +35,6 @@ function resolveInitialTheme(): Theme {
 
     const documentTheme = document.documentElement.getAttribute("data-theme");
     return documentTheme === "light" ? "light" : "dark";
-}
-
-function isTauriRuntime(): boolean {
-    if (typeof window === "undefined") {
-        return false;
-    }
-
-    const runtimeWindow = window as Window & {
-        __TAURI_INTERNALS__?: unknown;
-        __TAURI__?: unknown;
-    };
-    return Boolean(runtimeWindow.__TAURI_INTERNALS__ || runtimeWindow.__TAURI__);
 }
 
 function isMacPlatform(): boolean {
@@ -68,6 +58,7 @@ function resolveShellClassName(): string {
 function AppContent(): ReactNode {
     ensureWorkbenchContributionsRegistered();
     const apiRef = useRef<WorkbenchApi | null>(null);
+    const shellRef = useRef<HTMLDivElement | null>(null);
     const dispatch = useAppDispatch();
     const [settingsOpen, setSettingsOpen] = useState(false);
     const [theme, setTheme] = useState<Theme>(resolveInitialTheme);
@@ -75,6 +66,7 @@ function AppContent(): ReactNode {
     const activities = useActivityDefinitions();
     const panels = usePanelDefinitions();
     const tabComponents = useTabComponentRenderers();
+    useWindowDragRegions(shellRef);
 
     const handleThemeChange = useCallback((t: Theme) => {
         setTheme(t);
@@ -94,7 +86,7 @@ function AppContent(): ReactNode {
 
     return (
         <>
-            <div className={shellClassName}>
+            <div ref={shellRef} className={shellClassName}>
                 <VSCodeWorkbench
                     activities={activities}
                     panels={panels}

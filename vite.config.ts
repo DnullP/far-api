@@ -1,8 +1,13 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
+const projectRoot = path.dirname(fileURLToPath(import.meta.url));
+const workspaceRoot = path.resolve(projectRoot, "..");
+const layoutV2SourceRoot = path.join(workspaceRoot, "layout-v2", "src");
 
 /**
  * Vite plugin: 在 dev server 上代理 /api-proxy?url=<target> 请求，
@@ -65,6 +70,18 @@ function apiProxyPlugin(): Plugin {
 // https://vite.dev/config/
 export default defineConfig(async () => ({
   plugins: [react(), apiProxyPlugin()],
+  resolve: {
+    alias: [
+      {
+        find: /^layout-v2\/styles\.css$/,
+        replacement: path.join(projectRoot, "src", "styles", "layout-v2-source.css"),
+      },
+      {
+        find: /^layout-v2$/,
+        replacement: path.join(layoutV2SourceRoot, "index.ts"),
+      },
+    ],
+  },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //

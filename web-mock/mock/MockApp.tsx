@@ -15,12 +15,26 @@ interface MockCollection {
     id: string;
     name: string;
     sortOrder: number;
-    items: MockRequest[];
+    items: MockCollectionItem[];
+}
+
+type MockCollectionItem = MockFolder | MockRequest;
+
+interface MockFolder {
+    type: "folder";
+    id: string;
+    collectionId: string;
+    parentFolderId: string | null;
+    name: string;
+    sortOrder: number;
+    children: MockCollectionItem[];
 }
 
 interface MockRequest {
+    type: "request";
     id: string;
     collectionId: string;
+    folderId: string | null;
     name: string;
     method: string;
     url: string;
@@ -35,6 +49,10 @@ interface MockRequest {
         apiKeyName: string;
         apiKeyValue: string;
         apiKeyPlacement: string;
+    };
+    scripts: {
+        preRequest: string;
+        postResponse: string;
     };
     sortOrder: number;
 }
@@ -61,11 +79,28 @@ interface MockHistoryEntry {
     createdAt: string;
 }
 
+interface MockRunnerReport {
+    id: string;
+    targetName: string;
+    targetKind: string;
+    targetId: string;
+    collectionId: string;
+    folderId: string | null;
+    iterations: number;
+    totalRequests: number;
+    passedTests: number;
+    failedTests: number;
+    durationMs: number;
+    results: unknown[];
+    createdAt: string;
+}
+
 const mockStore = {
     collections: [] as MockCollection[],
     environments: [] as MockEnvironment[],
     config: new Map<string, string>(),
     history: [] as MockHistoryEntry[],
+    runnerReports: [] as MockRunnerReport[],
     _counter: 0,
 };
 
@@ -78,6 +113,182 @@ seedMockStore();
 function mockId(): string {
     mockStore._counter++;
     return `mock-${Date.now()}-${mockStore._counter}`;
+}
+
+function isMockFolder(item: MockCollectionItem): item is MockFolder {
+    return item.type === "folder";
+}
+
+function findMockFolder(items: MockCollectionItem[], folderId: string): MockFolder | null {
+    for (const item of items) {
+        if (!isMockFolder(item)) {
+            continue;
+        }
+        if (item.id === folderId) {
+            return item;
+        }
+        const nested = findMockFolder(item.children, folderId);
+        if (nested) {
+            return nested;
+        }
+    }
+
+    return null;
+}
+
+function takeMockRequest(items: MockCollectionItem[], requestId: string): MockRequest | null {
+    const index = items.findIndex((item) => !isMockFolder(item) && item.id === requestId);
+    if (index >= 0) {
+        return items.splice(index, 1)[0] as MockRequest;
+    }
+
+    for (const item of items) {
+        if (isMockFolder(item)) {
+            const request = takeMockRequest(item.children, requestId);
+            if (request) {
+                return request;
+            }
+        }
+    }
+
+    return null;
+}
+
+function updateMockRequest(items: MockCollectionItem[], request: MockRequest): boolean {
+    for (let index = 0; index < items.length; index++) {
+        const item = items[index];
+        if (isMockFolder(item)) {
+            if (updateMockRequest(item.children, request)) {
+                request.folderId = item.id;
+                return true;
+            }
+            continue;
+        }
+        if (item.id === request.id) {
+            items[index] = { ...request, type: "request", folderId: item.folderId };
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function deleteMockRequest(items: MockCollectionItem[], requestId: string): boolean {
+    const index = items.findIndex((item) => !isMockFolder(item) && item.id === requestId);
+    if (index >= 0) {
+        items.splice(index, 1);
+        return true;
+    }
+
+    for (const item of items) {
+        if (isMockFolder(item) && deleteMockRequest(item.children, requestId)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function deleteMockFolder(items: MockCollectionItem[], folderId: string): boolean {
+    const index = items.findIndex((item) => isMockFolder(item) && item.id === folderId);
+    if (index >= 0) {
+        items.splice(index, 1);
+        return true;
+    }
+
+    for (const item of items) {
+        if (isMockFolder(item) && deleteMockFolder(item.children, folderId)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function takeMockFolder(items: MockCollectionItem[], folderId: string): MockFolder | null {
+    const index = items.findIndex((item) => isMockFolder(item) && item.id === folderId);
+    if (index >= 0) {
+        return items.splice(index, 1)[0] as MockFolder;
+    }
+
+    for (const item of items) {
+        if (isMockFolder(item)) {
+            const folder = takeMockFolder(item.children, folderId);
+            if (folder) {
+                return folder;
+            }
+        }
+    }
+
+    return null;
+}
+
+function updateMockFolderCollection(folder: MockFolder, collectionId: string, parentFolderId: string | null): void {
+    folder.collectionId = collectionId;
+    folder.parentFolderId = parentFolderId;
+    for (const child of folder.children) {
+        child.collectionId = collectionId;
+        if (isMockFolder(child)) {
+            updateMockFolderCollection(child, collectionId, folder.id);
+        } else {
+            child.folderId = folder.id;
+        }
+    }
+}
+
+function insertMockRequest(
+    collection: MockCollection,
+    request: MockRequest,
+    folderId: string | null,
+    beforeRequestId?: string | null,
+): void {
+    const targetItems = folderId
+        ? findMockFolder(collection.items, folderId)?.children
+        : collection.items;
+    if (!targetItems) {
+        return;
+    }
+    request.collectionId = collection.id;
+    request.folderId = folderId;
+    const insertAt = beforeRequestId
+        ? targetItems.findIndex((item) => !isMockFolder(item) && item.id === beforeRequestId)
+        : -1;
+    if (insertAt >= 0) {
+        targetItems.splice(insertAt, 0, request);
+    } else {
+        targetItems.push(request);
+    }
+    reindexMockItems(targetItems);
+}
+
+function insertMockFolder(
+    collection: MockCollection,
+    folder: MockFolder,
+    parentFolderId: string | null,
+    beforeItemId?: string | null,
+): void {
+    const targetItems = parentFolderId
+        ? findMockFolder(collection.items, parentFolderId)?.children
+        : collection.items;
+    if (!targetItems) {
+        return;
+    }
+    updateMockFolderCollection(folder, collection.id, parentFolderId);
+    const insertAt = beforeItemId
+        ? targetItems.findIndex((item) => item.id === beforeItemId)
+        : -1;
+    if (insertAt >= 0) {
+        targetItems.splice(insertAt, 0, folder);
+    } else {
+        targetItems.push(folder);
+    }
+    reindexMockItems(targetItems);
+}
+
+function reindexMockItems(items: MockCollectionItem[]): void {
+    items.forEach((item, index) => {
+        item.sortOrder = index;
+    });
 }
 
 /* ---- Mock Tauri invoke ---- */
@@ -138,6 +349,9 @@ async function mockHttpRequest(input: HttpRequestInput) {
 
 async function mockInvoke(cmd: string, args?: Record<string, unknown>): Promise<unknown> {
     switch (cmd) {
+        case "plugin:window|start_dragging":
+            console.info("[mock:window] start_dragging", args);
+            return undefined;
         case "http_request":
             return mockHttpRequest(args?.input as HttpRequestInput);
         case "greet":
@@ -171,50 +385,58 @@ async function mockInvoke(cmd: string, args?: Record<string, unknown>): Promise<
             });
             return undefined;
         }
-
-        // ---- Requests ----
-        case "create_request": {
-            const req: MockRequest = {
-                id: mockId(),
-                collectionId: args?.collectionId as string,
-                name: args?.name as string,
-                method: "GET",
-                url: "",
-                params: [],
-                headers: [],
-                body: { type: "none", json: "{}", form: [], raw: "" },
-                auth: defaultMockAuth(),
-                sortOrder: 0,
-            };
-            const parent = mockStore.collections.find((c) => c.id === req.collectionId);
-            parent?.items.push(req);
-            return req;
-        }
-        case "update_request": {
-            const r = args?.request as MockRequest;
-            const parent = mockStore.collections.find((c) => c.id === r.collectionId);
-            if (parent) {
-                const idx = parent.items.findIndex((i) => i.id === r.id);
-                if (idx >= 0) parent.items[idx] = r;
-            }
-            return undefined;
-        }
-        case "delete_request":
-            for (const c of mockStore.collections) {
-                c.items = c.items.filter((i) => i.id !== args?.id);
-            }
-            return undefined;
-        case "move_request": {
+        case "create_folder": {
             const input = args?.input as {
-                requestId: string;
-                targetCollectionId: string;
-                beforeRequestId?: string | null;
+                collectionId: string;
+                parentFolderId?: string | null;
+                name: string;
             };
-            let moving: MockRequest | null = null;
+            const folder: MockFolder = {
+                type: "folder",
+                id: mockId(),
+                collectionId: input.collectionId,
+                parentFolderId: input.parentFolderId ?? null,
+                name: input.name,
+                sortOrder: 0,
+                children: [],
+            };
+            const parent = mockStore.collections.find((c) => c.id === input.collectionId);
+            const targetItems = input.parentFolderId
+                ? parent ? findMockFolder(parent.items, input.parentFolderId)?.children : null
+                : parent?.items;
+            targetItems?.push(folder);
+            if (targetItems) reindexMockItems(targetItems);
+            return folder;
+        }
+        case "rename_folder": {
             for (const collection of mockStore.collections) {
-                const index = collection.items.findIndex((item) => item.id === input.requestId);
-                if (index >= 0) {
-                    moving = collection.items.splice(index, 1)[0] ?? null;
+                const folder = findMockFolder(collection.items, args?.id as string);
+                if (folder) {
+                    folder.name = args?.name as string;
+                    break;
+                }
+            }
+            return undefined;
+        }
+        case "delete_folder": {
+            for (const collection of mockStore.collections) {
+                if (deleteMockFolder(collection.items, args?.id as string)) {
+                    break;
+                }
+            }
+            return undefined;
+        }
+        case "move_folder": {
+            const input = args?.input as {
+                folderId: string;
+                targetCollectionId: string;
+                targetParentFolderId?: string | null;
+                beforeItemId?: string | null;
+            };
+            let moving: MockFolder | null = null;
+            for (const collection of mockStore.collections) {
+                moving = takeMockFolder(collection.items, input.folderId);
+                if (moving) {
                     break;
                 }
             }
@@ -222,18 +444,66 @@ async function mockInvoke(cmd: string, args?: Record<string, unknown>): Promise<
             if (!moving || !target) {
                 return undefined;
             }
-            moving.collectionId = target.id;
-            const insertAt = input.beforeRequestId
-                ? target.items.findIndex((item) => item.id === input.beforeRequestId)
-                : -1;
-            if (insertAt >= 0) {
-                target.items.splice(insertAt, 0, moving);
-            } else {
-                target.items.push(moving);
+            insertMockFolder(target, moving, input.targetParentFolderId ?? null, input.beforeItemId ?? null);
+            return undefined;
+        }
+
+        // ---- Requests ----
+        case "create_request": {
+            const req: MockRequest = {
+                type: "request",
+                id: mockId(),
+                collectionId: args?.collectionId as string,
+                folderId: (args?.folderId as string | null | undefined) ?? null,
+                name: args?.name as string,
+                method: "GET",
+                url: "",
+                params: [],
+                headers: [],
+                body: { type: "none", json: "{}", form: [], raw: "" },
+                auth: defaultMockAuth(),
+                scripts: defaultMockScripts(),
+                sortOrder: 0,
+            };
+            const parent = mockStore.collections.find((c) => c.id === req.collectionId);
+            if (parent) {
+                insertMockRequest(parent, req, req.folderId, null);
             }
-            target.items.forEach((item, index) => {
-                item.sortOrder = index;
-            });
+            return req;
+        }
+        case "update_request": {
+            const r = args?.request as MockRequest;
+            for (const collection of mockStore.collections) {
+                if (updateMockRequest(collection.items, r)) {
+                    break;
+                }
+            }
+            return undefined;
+        }
+        case "delete_request":
+            for (const c of mockStore.collections) {
+                deleteMockRequest(c.items, args?.id as string);
+            }
+            return undefined;
+        case "move_request": {
+            const input = args?.input as {
+                requestId: string;
+                targetCollectionId: string;
+                targetFolderId?: string | null;
+                beforeRequestId?: string | null;
+            };
+            let moving: MockRequest | null = null;
+            for (const collection of mockStore.collections) {
+                moving = takeMockRequest(collection.items, input.requestId);
+                if (moving) {
+                    break;
+                }
+            }
+            const target = mockStore.collections.find((collection) => collection.id === input.targetCollectionId);
+            if (!moving || !target) {
+                return undefined;
+            }
+            insertMockRequest(target, moving, input.targetFolderId ?? null, input.beforeRequestId);
             return undefined;
         }
 
@@ -297,6 +567,27 @@ async function mockInvoke(cmd: string, args?: Record<string, unknown>): Promise<
             mockStore.history = mockStore.history.filter((h) => h.id !== args?.id);
             return undefined;
 
+        // ---- Runner Reports ----
+        case "add_runner_report": {
+            const report = args?.report as Omit<MockRunnerReport, "id" | "createdAt">;
+            const savedReport: MockRunnerReport = {
+                ...report,
+                id: mockId(),
+                folderId: report.folderId ?? null,
+                createdAt: new Date().toISOString(),
+            };
+            mockStore.runnerReports.unshift(savedReport);
+            return savedReport;
+        }
+        case "list_runner_reports": {
+            const limit = (args?.limit as number) ?? 20;
+            const offset = (args?.offset as number) ?? 0;
+            return mockStore.runnerReports.slice(offset, offset + limit);
+        }
+        case "delete_runner_report":
+            mockStore.runnerReports = mockStore.runnerReports.filter((report) => report.id !== args?.id);
+            return undefined;
+
         case "frontend_log": {
             const entry = args?.entry as {
                 level: string;
@@ -336,6 +627,10 @@ async function mockInvoke(cmd: string, args?: Record<string, unknown>): Promise<
 // 挂载 mock，使 @tauri-apps/api/core 的 invoke() 使用我们的实现
 (window as Record<string, unknown>).__TAURI_INTERNALS__ = {
     invoke: mockInvoke,
+    metadata: {
+        currentWindow: { label: "main" },
+        currentWebview: { label: "main" },
+    },
     transformCallback: (callback: (payload: unknown) => void) => {
         const id = `_${Date.now()}_${Math.random().toString(36).slice(2)}`;
         (window as Record<string, unknown>)[id] = callback;
@@ -361,14 +656,23 @@ function defaultMockAuth(): MockRequest["auth"] {
     };
 }
 
+function defaultMockScripts(): MockRequest["scripts"] {
+    return {
+        preRequest: "",
+        postResponse: "",
+    };
+}
+
 function seedMockStore(): void {
     if (mockStore.collections.length > 0) {
         return;
     }
 
     const request: MockRequest = {
+        type: "request",
         id: DEFAULT_REQUEST_ID,
         collectionId: DEFAULT_COLLECTION_ID,
+        folderId: null,
         name: "Example Request",
         method: "POST",
         url: "{{base_url}}/anything",
@@ -385,6 +689,7 @@ function seedMockStore(): void {
             raw: "",
         },
         auth: defaultMockAuth(),
+        scripts: defaultMockScripts(),
         sortOrder: 0,
     };
 

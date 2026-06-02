@@ -8,8 +8,10 @@ import {
     type ApiResponse,
     type Collection,
     type Environment,
+    type RequestFolder,
     createKeyValuePair,
     createRequestAuth,
+    createRequestScripts,
     isFolder,
 } from "../types/api";
 import { createVariableResolver } from "../services/requestResolver";
@@ -62,9 +64,11 @@ type Action =
     | { type: "DELETE_HISTORY_ENTRY"; entryId: string }
     | { type: "CLEAR_HISTORY" }
     | { type: "ADD_COLLECTION"; collection: Collection }
-    | { type: "ADD_REQUEST_TO_COLLECTION"; collectionId: string; request: ApiRequest }
+    | { type: "ADD_FOLDER_TO_COLLECTION"; collectionId: string; parentFolderId?: string | null; folder: RequestFolder }
+    | { type: "ADD_REQUEST_TO_COLLECTION"; collectionId: string; folderId?: string | null; request: ApiRequest }
     | { type: "OPEN_REQUEST"; tabId: string; request: ApiRequest }
     | { type: "UPDATE_COLLECTION"; collectionId: string; collection: Partial<Collection> }
+    | { type: "UPDATE_FOLDER"; collectionId: string; folderId: string; folder: Partial<RequestFolder> }
     | { type: "UPDATE_REQUEST_BY_ID"; requestId: string; request: Partial<ApiRequest> }
     | { type: "REORDER_COLLECTIONS"; collectionIds: string[] }
     | {
@@ -72,7 +76,16 @@ type Action =
         requestId: string;
         fromCollectionId: string;
         toCollectionId: string;
+        toFolderId?: string | null;
         beforeRequestId?: string | null;
+    }
+    | {
+        type: "MOVE_FOLDER";
+        folderId: string;
+        fromCollectionId: string;
+        toCollectionId: string;
+        toParentFolderId?: string | null;
+        beforeItemId?: string | null;
     }
     | { type: "SET_RESPONSE"; tabId: string; response: ApiResponse | null }
     | { type: "SET_LOADING"; tabId: string; loading: boolean }
@@ -82,6 +95,7 @@ type Action =
     | { type: "DELETE_ENVIRONMENT"; envId: string }
     | { type: "REMOVE_TAB"; tabId: string }
     | { type: "DELETE_COLLECTION"; collectionId: string }
+    | { type: "DELETE_FOLDER"; collectionId: string; folderId: string }
     | { type: "DELETE_REQUEST"; collectionId: string; requestId: string };
 
 type CollectionItem = Collection["items"][number];
@@ -117,17 +131,20 @@ function normalizeRequest(request: ApiRequest): ApiRequest {
     return {
         ...request,
         auth: createRequestAuth(request.auth),
+        scripts: createRequestScripts(request.scripts),
     };
+}
+
+function normalizeItem(item: CollectionItem): CollectionItem {
+    return isFolder(item)
+        ? { ...item, children: item.children.map(normalizeItem) }
+        : normalizeRequest(item);
 }
 
 function normalizeCollections(collections: Collection[]): Collection[] {
     return collections.map((collection) => ({
         ...collection,
-        items: collection.items.map((item) =>
-            isFolder(item)
-                ? { ...item, children: item.children.map((child) => isFolder(child) ? child : normalizeRequest(child)) }
-                : normalizeRequest(item),
-        ),
+        items: collection.items.map(normalizeItem),
     }));
 }
 
@@ -163,6 +180,152 @@ function collectRequestIds(items: CollectionItem[]): string[] {
     return items.flatMap((item) =>
         isFolder(item) ? collectRequestIds(item.children) : [item.id],
     );
+}
+
+function insertFolderItem(
+    items: CollectionItem[],
+    folder: RequestFolder,
+    parentFolderId?: string | null,
+    beforeItemId?: string | null,
+): CollectionItem[] {
+    if (!parentFolderId) {
+        if (beforeItemId) {
+            const insertAt = items.findIndex((item) => item.id === beforeItemId);
+            if (insertAt >= 0) {
+                return [
+                    ...items.slice(0, insertAt),
+                    folder,
+                    ...items.slice(insertAt),
+                ];
+            }
+        }
+        return [...items, folder];
+    }
+
+    let changed = false;
+    const nextItems = items.map((item) => {
+        if (!isFolder(item)) {
+            return item;
+        }
+
+        if (item.id === parentFolderId) {
+            changed = true;
+            return {
+                ...item,
+                children: insertFolderItem(item.children, folder, null, beforeItemId),
+            };
+        }
+
+        const nextChildren = insertFolderItem(item.children, folder, parentFolderId, beforeItemId);
+        if (nextChildren !== item.children) {
+            changed = true;
+            return { ...item, children: nextChildren };
+        }
+
+        return item;
+    });
+
+    return changed ? nextItems : items;
+}
+
+function updateFolderItems(
+    items: CollectionItem[],
+    folderId: string,
+    folder: Partial<RequestFolder>,
+): CollectionItem[] {
+    let changed = false;
+    const nextItems = items.map((item) => {
+        if (!isFolder(item)) {
+            return item;
+        }
+
+        if (item.id === folderId) {
+            changed = true;
+            return { ...item, ...folder };
+        }
+
+        const nextChildren = updateFolderItems(item.children, folderId, folder);
+        if (nextChildren !== item.children) {
+            changed = true;
+            return { ...item, children: nextChildren };
+        }
+
+        return item;
+    });
+
+    return changed ? nextItems : items;
+}
+
+function removeFolderItems(
+    items: CollectionItem[],
+    folderId: string,
+): { items: CollectionItem[]; requestIds: string[]; changed: boolean } {
+    let changed = false;
+    const requestIds: string[] = [];
+    const nextItems: CollectionItem[] = [];
+
+    for (const item of items) {
+        if (!isFolder(item)) {
+            nextItems.push(item);
+            continue;
+        }
+
+        if (item.id === folderId) {
+            changed = true;
+            requestIds.push(...collectRequestIds(item.children));
+            continue;
+        }
+
+        const childResult = removeFolderItems(item.children, folderId);
+        if (childResult.changed) {
+            changed = true;
+            requestIds.push(...childResult.requestIds);
+            nextItems.push({ ...item, children: childResult.items });
+            continue;
+        }
+
+        nextItems.push(item);
+    }
+
+    return { items: changed ? nextItems : items, requestIds, changed };
+}
+
+function takeFolderItem(
+    items: CollectionItem[],
+    folderId: string,
+): { items: CollectionItem[]; folder: RequestFolder | null; changed: boolean } {
+    let changed = false;
+    let foundFolder: RequestFolder | null = null;
+    const nextItems: CollectionItem[] = [];
+
+    for (const item of items) {
+        if (!isFolder(item)) {
+            nextItems.push(item);
+            continue;
+        }
+
+        if (item.id === folderId) {
+            changed = true;
+            foundFolder = item;
+            continue;
+        }
+
+        const childResult = takeFolderItem(item.children, folderId);
+        if (childResult.changed) {
+            changed = true;
+            foundFolder = childResult.folder;
+            nextItems.push({ ...item, children: childResult.items });
+            continue;
+        }
+
+        nextItems.push(item);
+    }
+
+    return {
+        items: changed ? nextItems : items,
+        folder: foundFolder,
+        changed,
+    };
 }
 
 function omitKeys<T>(record: Record<string, T>, keys: Set<string>): Record<string, T> {
@@ -245,8 +408,41 @@ function reorderCollectionsById(collections: Collection[], collectionIds: string
 function insertRequestItem(
     items: CollectionItem[],
     request: ApiRequest,
+    targetFolderId?: string | null,
     beforeRequestId?: string | null,
 ): CollectionItem[] {
+    if (targetFolderId) {
+        let changed = false;
+        const nextItems = items.map((item) => {
+            if (!isFolder(item)) {
+                return item;
+            }
+
+            if (item.id === targetFolderId) {
+                changed = true;
+                return {
+                    ...item,
+                    children: insertRequestItem(item.children, request, null, beforeRequestId),
+                };
+            }
+
+            const nextChildren = insertRequestItem(
+                item.children,
+                request,
+                targetFolderId,
+                beforeRequestId,
+            );
+            if (nextChildren !== item.children) {
+                changed = true;
+                return { ...item, children: nextChildren };
+            }
+
+            return item;
+        });
+
+        return changed ? nextItems : items;
+    }
+
     const nextItems = items.filter((item) => isFolder(item) || item.id !== request.id);
     if (!beforeRequestId) {
         return [...nextItems, request];
@@ -269,6 +465,7 @@ function moveRequest(
     requestId: string,
     fromCollectionId: string,
     toCollectionId: string,
+    toFolderId?: string | null,
     beforeRequestId?: string | null,
 ): Collection[] {
     const sourceCollection = collections.find((collection) => collection.id === fromCollectionId);
@@ -288,8 +485,43 @@ function moveRequest(
                 : collection.items;
             return {
                 ...collection,
-                items: insertRequestItem(baseItems, request, beforeRequestId),
+                items: insertRequestItem(baseItems, request, toFolderId, beforeRequestId),
             };
+        }
+
+        return collection;
+    });
+}
+
+function moveFolder(
+    collections: Collection[],
+    folderId: string,
+    fromCollectionId: string,
+    toCollectionId: string,
+    toParentFolderId?: string | null,
+    beforeItemId?: string | null,
+): Collection[] {
+    const sourceCollection = collections.find((collection) => collection.id === fromCollectionId);
+    const takeResult = sourceCollection ? takeFolderItem(sourceCollection.items, folderId) : null;
+    const folder = takeResult?.folder ?? null;
+    if (!folder) {
+        return collections;
+    }
+
+    return collections.map((collection) => {
+        const baseItems = collection.id === fromCollectionId && takeResult?.changed
+            ? takeResult.items
+            : collection.items;
+
+        if (collection.id === toCollectionId) {
+            return {
+                ...collection,
+                items: insertFolderItem(baseItems, folder, toParentFolderId, beforeItemId),
+            };
+        }
+
+        if (collection.id === fromCollectionId) {
+            return { ...collection, items: baseItems };
         }
 
         return collection;
@@ -350,12 +582,50 @@ function reducer(state: AppState, action: Action): AppState {
                 ),
             };
         }
+        case "ADD_FOLDER_TO_COLLECTION": {
+            return {
+                ...state,
+                collections: state.collections.map((collection) =>
+                    collection.id === action.collectionId
+                        ? {
+                            ...collection,
+                            items: insertFolderItem(
+                                collection.items,
+                                action.folder,
+                                action.parentFolderId,
+                            ),
+                        }
+                        : collection,
+                ),
+            };
+        }
         case "ADD_REQUEST_TO_COLLECTION": {
             return {
                 ...state,
                 collections: state.collections.map((c) =>
-                    c.id === action.collectionId ? { ...c, items: [...c.items, action.request] } : c,
+                    c.id === action.collectionId
+                        ? { ...c, items: insertRequestItem(c.items, action.request, action.folderId, null) }
+                        : c,
                 ),
+            };
+        }
+        case "UPDATE_FOLDER": {
+            return {
+                ...state,
+                collections: state.collections.map((collection) => {
+                    if (collection.id !== action.collectionId) {
+                        return collection;
+                    }
+
+                    const nextItems = updateFolderItems(
+                        collection.items,
+                        action.folderId,
+                        action.folder,
+                    );
+                    return nextItems === collection.items
+                        ? collection
+                        : { ...collection, items: nextItems };
+                }),
             };
         }
         case "UPDATE_REQUEST_BY_ID": {
@@ -393,7 +663,21 @@ function reducer(state: AppState, action: Action): AppState {
                     action.requestId,
                     action.fromCollectionId,
                     action.toCollectionId,
+                    action.toFolderId,
                     action.beforeRequestId,
+                ),
+            };
+        }
+        case "MOVE_FOLDER": {
+            return {
+                ...state,
+                collections: moveFolder(
+                    state.collections,
+                    action.folderId,
+                    action.fromCollectionId,
+                    action.toCollectionId,
+                    action.toParentFolderId,
+                    action.beforeItemId,
                 ),
             };
         }
@@ -407,6 +691,23 @@ function reducer(state: AppState, action: Action): AppState {
             return {
                 ...state,
                 collections: state.collections.filter((c) => c.id !== action.collectionId),
+                ...requestState,
+            };
+        }
+        case "DELETE_FOLDER": {
+            const collection = state.collections.find((c) => c.id === action.collectionId);
+            const folderResult = collection
+                ? removeFolderItems(collection.items, action.folderId)
+                : { items: [], requestIds: [], changed: false };
+            const requestState = removeRequestStateByIds(state, folderResult.requestIds);
+
+            return {
+                ...state,
+                collections: state.collections.map((c) =>
+                    c.id === action.collectionId && folderResult.changed
+                        ? { ...c, items: folderResult.items }
+                        : c,
+                ),
                 ...requestState,
             };
         }

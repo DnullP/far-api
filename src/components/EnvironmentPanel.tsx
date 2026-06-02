@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { Check, Pencil, Plus, Trash2, X } from "lucide-react";
+import { Check, Download, Pencil, Plus, Trash2, X } from "lucide-react";
 import { useAppDispatch, useAppState } from "../store/appStore";
 import { createKeyValuePair, type Environment, type EnvironmentVariable } from "../types/api";
 import {
@@ -9,6 +9,8 @@ import {
     setConfig,
     updateEnvironmentApi,
 } from "../services/persistence";
+import { exportEnvironmentAsPostman } from "../services/apiSpecExporter";
+import { ExportJsonModal, type ExportJsonModalArtifact } from "./ExportJsonModal";
 import "./EnvironmentPanel.css";
 
 function cloneVariables(variables: EnvironmentVariable[]): EnvironmentVariable[] {
@@ -169,6 +171,7 @@ export function EnvironmentPanel() {
     const dispatch = useAppDispatch();
     const [editingEnvId, setEditingEnvId] = useState<string | null>(null);
     const [draftEnv, setDraftEnv] = useState<Environment | null>(null);
+    const [exportArtifact, setExportArtifact] = useState<ExportJsonModalArtifact | null>(null);
 
     useEffect(() => {
         if (!draftEnv) {
@@ -212,6 +215,15 @@ export function EnvironmentPanel() {
         } catch (err) {
             console.error("Failed to delete environment:", err);
         }
+    };
+
+    const handleExportEnvironment = (env: Environment) => {
+        const artifact = exportEnvironmentAsPostman(env);
+        setExportArtifact({
+            title: `Export ${env.name}`,
+            fileName: artifact.fileName,
+            json: artifact.json,
+        });
     };
 
     const handleConfirmDraft = async () => {
@@ -285,6 +297,14 @@ export function EnvironmentPanel() {
                                 <Pencil size={13} />
                             </button>
                             <button
+                                className="env-action-btn"
+                                type="button"
+                                title="Export Environment"
+                                onClick={() => handleExportEnvironment(env)}
+                            >
+                                <Download size={13} />
+                            </button>
+                            <button
                                 className="env-action-btn danger"
                                 type="button"
                                 title="Delete Environment"
@@ -308,6 +328,13 @@ export function EnvironmentPanel() {
                     onConfirm={() => {
                         void handleConfirmDraft();
                     }}
+                />,
+                document.body,
+            )}
+            {exportArtifact && typeof document !== "undefined" && createPortal(
+                <ExportJsonModal
+                    artifact={exportArtifact}
+                    onClose={() => setExportArtifact(null)}
                 />,
                 document.body,
             )}

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { resolveRequest } from "../src/services/requestResolver";
-import { createRequestAuth, type ApiRequest } from "../src/types/api";
+import { createRequestAuth, createRequestScripts, type ApiRequest } from "../src/types/api";
 import type { AppState } from "../src/store/appStore";
 
 function createState(): AppState {
@@ -41,6 +41,7 @@ function createRequest(overrides: Partial<ApiRequest> = {}): ApiRequest {
             raw: "",
         },
         auth: createRequestAuth(),
+        scripts: createRequestScripts(),
         ...overrides,
     };
 }

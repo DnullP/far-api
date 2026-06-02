@@ -10,8 +10,16 @@ export interface ResolvedRequest {
     body: RequestBody;
 }
 
-export function resolveRequest(request: ApiRequest, state: AppState): ResolvedRequest {
-    const resolve = createVariableResolver(state);
+export interface ResolveRequestOptions {
+    variables?: Record<string, string>;
+}
+
+export function resolveRequest(
+    request: ApiRequest,
+    state: AppState,
+    options: ResolveRequestOptions = {},
+): ResolvedRequest {
+    const resolve = createVariableResolver(state, options.variables);
     const params = resolvePairs(request.params, resolve);
     const headers = pairsToHeaderRecord(resolvePairs(request.headers, resolve));
     const auth = normalizeRequestAuth(request.auth);
@@ -27,7 +35,10 @@ export function resolveRequest(request: ApiRequest, state: AppState): ResolvedRe
     };
 }
 
-export function createVariableResolver(state: AppState): (input: string) => string {
+export function createVariableResolver(
+    state: AppState,
+    runtimeVariables: Record<string, string> = {},
+): (input: string) => string {
     const variables = new Map<string, string>();
     const env = state.environments.find((item) => item.id === state.activeEnvironmentId);
 
@@ -35,6 +46,9 @@ export function createVariableResolver(state: AppState): (input: string) => stri
         if (variable.enabled && variable.key) {
             variables.set(variable.key, variable.value);
         }
+    }
+    for (const [key, value] of Object.entries(runtimeVariables)) {
+        variables.set(key, value);
     }
 
     return (input: string) =>
