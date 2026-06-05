@@ -1,164 +1,64 @@
-import { useSyncExternalStore, type ReactNode } from "react";
-import type {
-    WorkbenchActivityDefinition,
-    WorkbenchPanelContext,
-    WorkbenchPanelDefinition,
-    WorkbenchTabApi,
+import {
+    createWorkbenchRegistry,
+    type WorkbenchActivityContribution,
+    type WorkbenchActivityDefinition,
+    type WorkbenchPanelContribution,
+    type WorkbenchPanelDefinition,
+    type WorkbenchTabComponentContribution,
+    type WorkbenchTabRenderer,
 } from "layout-v2";
 
-export type WorkbenchTabRenderer = (props: {
-    params: Record<string, unknown>;
-    api: WorkbenchTabApi;
-}) => ReactNode;
+export type ActivityContribution = WorkbenchActivityContribution;
+export type PanelContribution = WorkbenchPanelContribution;
+export type TabComponentContribution = WorkbenchTabComponentContribution;
+export type { WorkbenchTabRenderer };
 
-export interface ActivityContribution extends WorkbenchActivityDefinition {
-    order?: number;
-    onActivate?: (context: WorkbenchPanelContext) => void;
-}
-
-export interface PanelContribution extends WorkbenchPanelDefinition {
-    render: (context: WorkbenchPanelContext) => ReactNode;
-}
-
-export interface TabComponentContribution {
-    id: string;
-    render: WorkbenchTabRenderer;
-}
-
-const activities = new Map<string, ActivityContribution>();
-const panels = new Map<string, PanelContribution>();
-const tabComponents = new Map<string, TabComponentContribution>();
-const listeners = new Set<() => void>();
-
-let activitySnapshot: ActivityContribution[] = [];
-let panelSnapshot: PanelContribution[] = [];
-let tabComponentSnapshot: TabComponentContribution[] = [];
-let activityDefinitionSnapshot: WorkbenchActivityDefinition[] = [];
-let panelDefinitionSnapshot: WorkbenchPanelDefinition[] = [];
-let tabComponentRendererSnapshot: Record<string, WorkbenchTabRenderer> = {};
-
-function emit(): void {
-    activitySnapshot = Array.from(activities.values()).sort((left, right) => {
-        const leftOrder = left.order ?? 0;
-        const rightOrder = right.order ?? 0;
-        if (leftOrder !== rightOrder) {
-            return leftOrder - rightOrder;
-        }
-        return left.id.localeCompare(right.id);
-    });
-    panelSnapshot = Array.from(panels.values()).sort((left, right) => {
-        const leftOrder = left.order ?? 0;
-        const rightOrder = right.order ?? 0;
-        if (leftOrder !== rightOrder) {
-            return leftOrder - rightOrder;
-        }
-        return left.id.localeCompare(right.id);
-    });
-    tabComponentSnapshot = Array.from(tabComponents.values()).sort((left, right) =>
-        left.id.localeCompare(right.id),
-    );
-    activityDefinitionSnapshot = activitySnapshot.map(toActivityDefinition);
-    panelDefinitionSnapshot = panelSnapshot.map(toPanelDefinition);
-    tabComponentRendererSnapshot = buildTabComponentRendererMap(tabComponentSnapshot);
-    listeners.forEach((listener) => listener());
-}
+const registry = createWorkbenchRegistry();
 
 export function registerActivity(contribution: ActivityContribution): () => void {
-    activities.set(contribution.id, contribution);
-    emit();
-    return () => {
-        if (activities.get(contribution.id) === contribution) {
-            activities.delete(contribution.id);
-            emit();
-        }
-    };
+    return registry.registerActivity(contribution);
 }
 
 export function registerPanel(contribution: PanelContribution): () => void {
-    panels.set(contribution.id, contribution);
-    emit();
-    return () => {
-        if (panels.get(contribution.id) === contribution) {
-            panels.delete(contribution.id);
-            emit();
-        }
-    };
+    return registry.registerPanel(contribution);
 }
 
 export function registerTabComponent(contribution: TabComponentContribution): () => void {
-    tabComponents.set(contribution.id, contribution);
-    emit();
-    return () => {
-        if (tabComponents.get(contribution.id) === contribution) {
-            tabComponents.delete(contribution.id);
-            emit();
-        }
-    };
+    return registry.registerTabComponent(contribution);
 }
 
 export function subscribeWorkbenchRegistry(listener: () => void): () => void {
-    listeners.add(listener);
-    return () => {
-        listeners.delete(listener);
-    };
+    return registry.subscribe(listener);
 }
 
 export function getActivitiesSnapshot(): ActivityContribution[] {
-    return activitySnapshot;
+    return registry.getActivitiesSnapshot();
 }
 
 export function getPanelsSnapshot(): PanelContribution[] {
-    return panelSnapshot;
+    return registry.getPanelsSnapshot();
 }
 
 export function getTabComponentsSnapshot(): TabComponentContribution[] {
-    return tabComponentSnapshot;
+    return registry.getTabComponentsSnapshot();
 }
 
 export function getActivityById(activityId: string): ActivityContribution | undefined {
-    return activities.get(activityId);
+    return registry.getActivityById(activityId);
 }
 
 export function getPanelById(panelId: string): PanelContribution | undefined {
-    return panels.get(panelId);
+    return registry.getPanelById(panelId);
 }
 
 export function useActivityDefinitions(): WorkbenchActivityDefinition[] {
-    return useSyncExternalStore(
-        subscribeWorkbenchRegistry,
-        () => activityDefinitionSnapshot,
-        () => activityDefinitionSnapshot,
-    );
+    return registry.useActivityDefinitions();
 }
 
 export function usePanelDefinitions(): WorkbenchPanelDefinition[] {
-    return useSyncExternalStore(
-        subscribeWorkbenchRegistry,
-        () => panelDefinitionSnapshot,
-        () => panelDefinitionSnapshot,
-    );
+    return registry.usePanelDefinitions();
 }
 
 export function useTabComponentRenderers(): Record<string, WorkbenchTabRenderer> {
-    return useSyncExternalStore(
-        subscribeWorkbenchRegistry,
-        () => tabComponentRendererSnapshot,
-        () => tabComponentRendererSnapshot,
-    );
-}
-
-function toActivityDefinition(contribution: ActivityContribution): WorkbenchActivityDefinition {
-    const { order: _order, onActivate: _onActivate, ...definition } = contribution;
-    return definition;
-}
-
-function toPanelDefinition(contribution: PanelContribution): WorkbenchPanelDefinition {
-    const { render: _render, ...definition } = contribution;
-    return definition;
-}
-
-function buildTabComponentRendererMap(
-    contributions: TabComponentContribution[],
-): Record<string, WorkbenchTabRenderer> {
-    return Object.fromEntries(contributions.map((entry) => [entry.id, entry.render]));
+    return registry.useTabComponentRenderers();
 }
